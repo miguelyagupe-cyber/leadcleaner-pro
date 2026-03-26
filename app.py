@@ -6,8 +6,10 @@ import uuid
 from datetime import datetime
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['OUTPUT_FOLDER'] = 'outputs'
+app.config['UPLOAD_FOLDER'] = '/tmp/uploads'
+os.makedirs('/tmp/uploads', exist_ok=True)
+app.config['OUTPUT_FOLDER'] = '/tmp/outputs'
+os.makedirs('/tmp/outputs', exist_ok=True)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 BUSINESS_PATTERNS = [
