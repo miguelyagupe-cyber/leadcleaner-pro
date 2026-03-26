@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LeadCleaner Pro</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a0a;
+      color: #f0f0f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #c9a84c;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    header p {
+      color: #888;
+      margin-top: 8px;
+      font-size: 0.95rem;
+      letter-spacing: 1px;
+    }
+    .gold-line {
+      width: 60px;
+      height: 2px;
+      background: #c9a84c;
+      margin: 16px auto 0;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 40px;
+      width: 100%;
+      max-width: 580px;
+      margin-bottom: 24px;
+    }
+    .card h2 {
+      font-size: 1rem;
+      color: #c9a84c;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 24px;
+    }
+
+    /* ── Upload zone ── */
+    .upload-zone {
+      border: 2px dashed #2a2a2a;
+      border-radius: 10px;
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: #c9a84c;
+      background: rgba(201,168,76,0.04);
+    }
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .upload-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+    }
+    .upload-zone p {
+      color: #888;
+      font-size: 0.9rem;
+    }
+    .upload-zone .file-name {
+      color: #c9a84c;
+      font-weight: 600;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+
+    /* ── Form fields ── */
+    .field {
+      margin-top: 24px;
+    }
+    .field label {
+      display: block;
+      font-size: 0.8rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .field input {
+      width: 100%;
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #f0f0f0;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .field input:focus {
+      border-color: #c9a84c;
+    }
+
+    /* ── Button ── */
+    .btn {
+      display: block;
+      width: 100%;
+      margin-top: 28px;
+      padding: 14px;
+      background: #c9a84c;
+      color: #0a0a0a;
+      font-weight: 700;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn:hover { background: #e0bc5e; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Progress ── */
+    #progress-section { display: none; }
+    .progress-bar-wrap {
+      background: #1e1e1e;
+      border-radius: 100px;
+      height: 6px;
+      margin: 16px 0;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: #c9a84c;
+      border-radius: 100px;
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+    .progress-label {
+      font-size: 0.85rem;
+      color: #888;
+      text-align: center;
+    }
+
+    /* ── Results ── */
+    #results-section { display: none; }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .stat-box {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-box .value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #c9a84c;
+    }
+    .stat-box .label {
+      font-size: 0.75rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 4px;
+    }
+    .stat-box.highlight {
+      border-color: #c9a84c;
+    }
+
+    .download-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: transparent;
+      color: #c9a84c;
+      font-weight: 700;
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      border: 2px solid #c9a84c;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      transition: background 0.2s, color 0.2s;
+      margin-bottom: 12px;
+    }
+    .download-btn:hover {
+      background: #c9a84c;
+      color: #0a0a0a;
+    }
+
+    .reset-btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background: transparent;
+      color: #555;
+      font-size: 0.85rem;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .reset-btn:hover { color: #f0f0f0; border-color: #555; }
+
+    /* ── Error ── */
+    .error-box {
+      background: rgba(220,50,50,0.1);
+      border: 1px solid rgba(220,50,50,0.3);
+      border-radius: 8px;
+      padding: 14px 18px;
+      color: #ff6b6b;
+      font-size: 0.9rem;
+      margin-top: 16px;
+      display: none;
+    }
+
+    footer {
+      color: #333;
+      font-size: 0.75rem;
+      margin-top: 40px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>LeadCleaner Pro</h1>
+    <p>Tulsa County Delinquent Tax — Lead Processing Tool</p>
+    <div class="gold-line"></div>
+  </header>
+
+  <!-- Upload card -->
+  <div class="card" id="upload-card">
+    <h2>Upload Your List</h2>
+
+    <div class="upload-zone" id="drop-zone">
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
+      <div class="upload-icon">📂</div>
+      <p>Drag & drop your Excel file here<br>or click to browse</p>
+      <div class="file-name" id="file-label"></div>
+    </div>
+
+    <div class="field">
+      <label>Tax Year to Target</label>
+      <input type="number" id="tax-year" value="2022" min="2000" max="2099" />
+    </div>
+
+    <button class="btn" id="process-btn" disabled>Process My List</button>
+    <div class="error-box" id="error-box"></div>
+  </div>
+
+  <!-- Progress card -->
+  <div class="card" id="progress-section">
+    <h2>Processing</h2>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <p class="progress-label" id="progress-label">Uploading file...</p>
+  </div>
+
+  <!-- Results card -->
+  <div class="card" id="results-section">
+    <h2>Results</h2>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="value" id="stat-original">—</div>
+        <div class="label">Original Rows</div>
+      </div>
+      <div class="stat-box">
+        <div class="value" id="stat-year">—</div>
+        <div class="label">Removed (wrong year)</div>
+      </div>
+      <div class="stat-box">
+        <div class="value" id="stat-biz">—</div>
+        <div class="label">Removed (businesses)</div>
+      </div>
+      <div class="stat-box highlight">
+        <div class="value" id="stat-final">—</div>
+        <div class="label">Clean Leads Ready</div>
+      </div>
+      <div class="stat-box">
+        <div class="value" id="stat-phone">—</div>
+        <div class="label">With Phone</div>
+      </div>
+      <div class="stat-box">
+        <div class="value" id="stat-nophone">—</div>
+        <div class="label">Need Phone</div>
+      </div>
+    </div>
+
+    <a class="download-btn" id="download-btn" href="#">⬇ Download Clean List</a>
+    <button class="reset-btn" id="reset-btn">Process Another List</button>
+  </div>
+
+  <footer>LeadCleaner Pro — Built for Daryl Moore Real Estate</footer>
+
+  <script>
+    const fileInput = document.getElementById('file-input');
+    const fileLabel = document.getElementById('file-label');
+    const processBtn = document.getElementById('process-btn');
+    const dropZone = document.getElementById('drop-zone');
+    const errorBox = document.getElementById('error-box');
+
+    // Drag & drop
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        onFileSelected();
+      }
+    });
+
+    fileInput.addEventListener('change', onFileSelected);
+
+    function onFileSelected() {
+      const f = fileInput.files[0];
+      if (f) {
+        fileLabel.textContent = f.name;
+        processBtn.disabled = false;
+        errorBox.style.display = 'none';
+      }
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = 'block';
+    }
+
+    function setProgress(pct, label) {
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('progress-label').textContent = label;
+    }
+
+    processBtn.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      const taxYear = document.getElementById('tax-year').value;
+      errorBox.style.display = 'none';
+
+      // Switch to progress view
+      document.getElementById('upload-card').style.display = 'none';
+      document.getElementById('progress-section').style.display = 'block';
+      setProgress(10, 'Uploading file...');
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('tax_year', taxYear);
+
+      try {
+        setProgress(30, 'Filtering by tax year...');
+        const res = await fetch('/process', { method: 'POST', body: formData });
+        setProgress(70, 'Removing businesses & LLCs...');
+        const data = await res.json();
+        setProgress(100, 'Done!');
+
+        if (!data.success) {
+          document.getElementById('upload-card').style.display = 'block';
+          document.getElementById('progress-section').style.display = 'none';
+          showError(data.error || 'Something went wrong.');
+          return;
+        }
+
+        // Populate results
+        const s = data.stats;
+        document.getElementById('stat-original').textContent = s.original.toLocaleString();
+        document.getElementById('stat-year').textContent = s.removed_year.toLocaleString();
+        document.getElementById('stat-biz').textContent = s.removed_business.toLocaleString();
+        document.getElementById('stat-final').textContent = s.final.toLocaleString();
+        document.getElementById('stat-phone').textContent = s.with_phone.toLocaleString();
+        document.getElementById('stat-nophone').textContent = s.without_phone.toLocaleString();
+        document.getElementById('download-btn').href = '/download/' + data.download_file;
+
+        setTimeout(() => {
+          document.getElementById('progress-section').style.display = 'none';
+          document.getElementById('results-section').style.display = 'block';
+        }, 600);
+
+      } catch (err) {
+        document.getElementById('upload-card').style.display = 'block';
+        document.getElementById('progress-section').style.display = 'none';
+        showError('Connection error. Make sure the app is running.');
+      }
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      document.getElementById('results-section').style.display = 'none';
+      document.getElementById('upload-card').style.display = 'block';
+      fileInput.value = '';
+      fileLabel.textContent = '';
+      processBtn.disabled = true;
+    });
+  </script>
+</body>
+</html>
