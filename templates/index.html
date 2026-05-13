@@ -4,364 +4,459 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>LeadCleaner Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fraunces:ital,wght@1,300;1,400&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0e0e10;
+      --surface:  #16161a;
+      --surface2: #1c1c22;
+      --border:   #26262e;
+      --border2:  #32323c;
+      --gold:     #c9a84c;
+      --gold-dim: rgba(201,168,76,0.12);
+      --gold-glow:rgba(201,168,76,0.06);
+      --text:     #ededef;
+      --subtext:  #7a7a8a;
+      --muted:    #44444e;
+      --green:    #6fcf8a;
+      --red:      #f27070;
+    }
 
     body {
-      background: #0a0a0a;
-      color: #f0f0f0;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 40px 20px;
+      padding: 64px 24px 96px;
     }
 
     /* ── Header ── */
     header {
       text-align: center;
-      margin-bottom: 48px;
+      margin-bottom: 56px;
+      width: 100%;
+      max-width: 560px;
     }
-    header h1 {
-      font-size: 2.2rem;
-      font-weight: 700;
-      color: #c9a84c;
-      letter-spacing: 2px;
+
+    .wordmark {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
-    header p {
-      color: #888;
-      margin-top: 8px;
-      font-size: 0.95rem;
-      letter-spacing: 1px;
+    .wordmark::before, .wordmark::after {
+      content: '';
+      display: block;
+      width: 24px;
+      height: 1px;
+      background: var(--gold);
+      opacity: 0.5;
     }
-    .gold-line {
-      width: 60px;
-      height: 2px;
-      background: #c9a84c;
-      margin: 16px auto 0;
+
+    h1 {
+      font-family: 'Inter', sans-serif;
+      font-size: clamp(28px, 5vw, 42px);
+      font-weight: 300;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--text);
+      margin-bottom: 14px;
     }
+    h1 em {
+      font-family: 'Fraunces', Georgia, serif;
+      font-style: italic;
+      font-weight: 300;
+      color: var(--gold);
+    }
+
+    .tagline {
+      font-size: 13px;
+      color: var(--subtext);
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Steps ── */
+    .steps-bar {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      max-width: 560px;
+      margin-bottom: 28px;
+    }
+    .step-item { display: flex; align-items: center; gap: 8px; flex: 1; }
+    .step-num {
+      width: 24px; height: 24px; border-radius: 50%;
+      border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 500; color: var(--muted);
+      flex-shrink: 0; transition: all 0.3s;
+    }
+    .step-label {
+      font-size: 10px; font-weight: 500; color: var(--muted);
+      letter-spacing: 0.1em; text-transform: uppercase; transition: color 0.3s;
+    }
+    .step-connector { flex: 1; height: 1px; background: var(--border); max-width: 48px; }
+    .step-item.active .step-num  { border-color: var(--gold); background: var(--gold); color: var(--bg); }
+    .step-item.active .step-label { color: var(--gold); }
+    .step-item.done .step-num    { border-color: var(--gold); color: var(--gold); background: transparent; }
+    .step-item.done .step-label  { color: var(--subtext); }
 
     /* ── Card ── */
     .card {
-      background: #141414;
-      border: 1px solid #2a2a2a;
-      border-radius: 12px;
-      padding: 40px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 36px;
       width: 100%;
-      max-width: 580px;
-      margin-bottom: 24px;
+      max-width: 560px;
+      margin-bottom: 16px;
     }
-    .card h2 {
-      font-size: 1rem;
-      color: #c9a84c;
+
+    .card-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-bottom: 24px;
+      color: var(--subtext);
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-label::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
     }
 
     /* ── Upload zone ── */
     .upload-zone {
-      border: 2px dashed #2a2a2a;
-      border-radius: 10px;
-      padding: 48px 24px;
+      border: 1px dashed var(--border2);
+      border-radius: 6px;
+      padding: 44px 24px;
       text-align: center;
       cursor: pointer;
       transition: border-color 0.2s, background 0.2s;
       position: relative;
     }
     .upload-zone:hover, .upload-zone.drag-over {
-      border-color: #c9a84c;
-      background: rgba(201,168,76,0.04);
+      border-color: var(--gold);
+      background: var(--gold-glow);
     }
     .upload-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-      width: 100%;
-      height: 100%;
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
     }
-    .upload-icon {
-      font-size: 2.5rem;
-      margin-bottom: 12px;
-    }
-    .upload-zone p {
-      color: #888;
-      font-size: 0.9rem;
-    }
-    .upload-zone .file-name {
-      color: #c9a84c;
-      font-weight: 600;
-      margin-top: 8px;
-      font-size: 0.9rem;
-    }
+    .upload-icon { font-size: 22px; margin-bottom: 10px; opacity: 0.7; }
+    .upload-zone p { color: var(--subtext); font-size: 13px; line-height: 1.6; }
+    .upload-zone p span { color: var(--text); font-weight: 500; }
+    .file-name { color: var(--gold); font-weight: 500; margin-top: 8px; font-size: 12px; }
 
-    /* ── Form fields ── */
-    .field {
-      margin-top: 24px;
-    }
+    /* ── Field ── */
+    .field { margin-top: 20px; }
     .field label {
-      display: block;
-      font-size: 0.8rem;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-bottom: 8px;
+      display: block; font-size: 10px; font-weight: 600;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--subtext); margin-bottom: 8px;
     }
     .field input {
-      width: 100%;
-      background: #0a0a0a;
-      border: 1px solid #2a2a2a;
-      border-radius: 8px;
-      padding: 12px 16px;
-      color: #f0f0f0;
-      font-size: 1rem;
-      outline: none;
-      transition: border-color 0.2s;
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 11px 14px; color: var(--text);
+      font-family: 'Inter', sans-serif; font-size: 14px;
+      outline: none; transition: border-color 0.2s;
     }
-    .field input:focus {
-      border-color: #c9a84c;
-    }
+    .field input:focus { border-color: var(--gold); }
 
-    /* ── Button ── */
-    .btn {
-      display: block;
-      width: 100%;
-      margin-top: 28px;
-      padding: 14px;
-      background: #c9a84c;
-      color: #0a0a0a;
-      font-weight: 700;
-      font-size: 0.95rem;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s, opacity 0.2s;
+    /* ── Buttons ── */
+    .btn-primary {
+      display: block; width: 100%; margin-top: 24px;
+      padding: 13px; background: var(--gold); color: var(--bg);
+      font-family: 'Inter', sans-serif; font-weight: 600;
+      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+      border: none; border-radius: 6px; cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
     }
-    .btn:hover { background: #e0bc5e; }
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
 
-    /* ── Progress ── */
-    #progress-section { display: none; }
-    .progress-bar-wrap {
-      background: #1e1e1e;
-      border-radius: 100px;
-      height: 6px;
-      margin: 16px 0;
-      overflow: hidden;
+    .btn-download {
+      display: block; width: 100%; padding: 13px;
+      background: transparent; color: var(--gold);
+      font-family: 'Inter', sans-serif; font-weight: 600;
+      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+      border: 1px solid var(--gold); border-radius: 6px; cursor: pointer;
+      text-align: center; text-decoration: none;
+      transition: background 0.2s, color 0.2s; margin-bottom: 12px;
     }
-    .progress-bar {
-      height: 100%;
-      background: #c9a84c;
-      border-radius: 100px;
-      width: 0%;
-      transition: width 0.4s ease;
-    }
-    .progress-label {
-      font-size: 0.85rem;
-      color: #888;
-      text-align: center;
-    }
+    .btn-download:hover { background: var(--gold); color: var(--bg); }
 
-    /* ── Results ── */
-    #results-section { display: none; }
-    .stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 24px;
+    .btn-phone {
+      display: block; width: 100%; padding: 13px;
+      background: transparent; color: var(--text);
+      font-family: 'Inter', sans-serif; font-weight: 500;
+      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
+      border: 1px solid var(--border2); border-radius: 6px; cursor: pointer;
+      text-align: center; transition: border-color 0.2s, color 0.2s;
     }
-    .stat-box {
-      background: #0a0a0a;
-      border: 1px solid #2a2a2a;
-      border-radius: 8px;
-      padding: 16px;
-      text-align: center;
-    }
-    .stat-box .value {
-      font-size: 1.8rem;
-      font-weight: 700;
-      color: #c9a84c;
-    }
-    .stat-box .label {
-      font-size: 0.75rem;
-      color: #666;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      margin-top: 4px;
-    }
-    .stat-box.highlight {
-      border-color: #c9a84c;
-    }
+    .btn-phone:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
+    .btn-phone:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    .download-btn {
-      display: block;
-      width: 100%;
-      padding: 14px;
-      background: transparent;
-      color: #c9a84c;
-      font-weight: 700;
-      font-size: 0.95rem;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      border: 2px solid #c9a84c;
-      border-radius: 8px;
-      cursor: pointer;
-      text-align: center;
-      text-decoration: none;
-      transition: background 0.2s, color 0.2s;
-      margin-bottom: 12px;
-    }
-    .download-btn:hover {
-      background: #c9a84c;
-      color: #0a0a0a;
-    }
-
-    .reset-btn {
-      display: block;
-      width: 100%;
-      padding: 12px;
-      background: transparent;
-      color: #555;
-      font-size: 0.85rem;
-      border: 1px solid #2a2a2a;
-      border-radius: 8px;
-      cursor: pointer;
-      text-align: center;
+    .btn-reset {
+      display: block; width: 100%; padding: 11px; margin-top: 10px;
+      background: transparent; color: var(--muted);
+      font-family: 'Inter', sans-serif; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
       transition: color 0.2s, border-color 0.2s;
     }
-    .reset-btn:hover { color: #f0f0f0; border-color: #555; }
+    .btn-reset:hover { color: var(--text); border-color: var(--border2); }
+
+    /* ── Progress ── */
+    .progress-wrap { margin: 20px 0; }
+    .progress-track {
+      background: var(--surface2); border-radius: 100px;
+      height: 3px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: var(--gold); border-radius: 100px;
+      width: 0%; transition: width 0.5s ease;
+    }
+    .progress-text {
+      font-size: 12px; color: var(--subtext);
+      text-align: center; margin-top: 10px;
+    }
+
+    /* ── Stats ── */
+    .stat-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px; margin-bottom: 24px;
+    }
+    .stat-box {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 18px 16px;
+    }
+    .stat-box.highlight { border-color: var(--gold); background: var(--gold-dim); }
+    .stat-value {
+      font-size: 26px; font-weight: 300; color: var(--text);
+      letter-spacing: -0.02em; line-height: 1;
+      margin-bottom: 5px;
+    }
+    .stat-box.highlight .stat-value { color: var(--gold); }
+    .stat-label {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--subtext);
+    }
+
+    /* ── Divider ── */
+    .divider {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--muted); margin: 12px 0 20px;
+    }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    /* ── Skip trace box ── */
+    .skiptrace-box {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 24px; background: var(--surface2);
+    }
+    .skiptrace-box h3 {
+      font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--text); margin-bottom: 8px;
+    }
+    .skiptrace-box p {
+      font-size: 13px; color: var(--subtext); line-height: 1.7; margin-bottom: 18px;
+    }
+    .skiptrace-box p strong { color: var(--text); font-weight: 500; }
+
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+      text-transform: uppercase; padding: 3px 10px;
+      border-radius: 100px; margin-bottom: 14px;
+    }
+    .pill-warn { background: var(--gold-dim); color: var(--gold); border: 1px solid rgba(201,168,76,0.25); }
+    .pill-ready { background: rgba(111,207,138,0.1); color: var(--green); border: 1px solid rgba(111,207,138,0.25); }
+    .pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+    .skiptrace-results {
+      display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);
+    }
+    .skiptrace-results h4 {
+      font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--subtext); margin-bottom: 14px;
+    }
 
     /* ── Error ── */
     .error-box {
-      background: rgba(220,50,50,0.1);
-      border: 1px solid rgba(220,50,50,0.3);
-      border-radius: 8px;
-      padding: 14px 18px;
-      color: #ff6b6b;
-      font-size: 0.9rem;
-      margin-top: 16px;
-      display: none;
+      background: rgba(242,112,112,0.08); border: 1px solid rgba(242,112,112,0.25);
+      border-radius: 6px; padding: 12px 16px; color: var(--red);
+      font-size: 12px; margin-top: 14px; display: none;
     }
 
+    /* ── Footer ── */
     footer {
-      color: #333;
-      font-size: 0.75rem;
-      margin-top: 40px;
-      letter-spacing: 1px;
+      margin-top: 64px; font-size: 11px; color: var(--muted);
+      letter-spacing: 0.06em; text-align: center;
     }
+    footer span { color: var(--gold); opacity: 0.7; }
   </style>
 </head>
 <body>
 
   <header>
-    <h1>LeadCleaner Pro</h1>
-    <p>Tulsa County Delinquent Tax — Lead Processing Tool</p>
-    <div class="gold-line"></div>
+    <div class="wordmark">LeadCleaner Pro</div>
+    <h1>Clean leads.<br><em>Close deals.</em></h1>
+    <p class="tagline">Tulsa County Delinquent Tax — Lead Processing Tool</p>
   </header>
+
+  <!-- Steps -->
+  <div class="steps-bar">
+    <div class="step-item active" id="step-indicator-1">
+      <div class="step-num">1</div>
+      <div class="step-label">Clean List</div>
+    </div>
+    <div class="step-connector"></div>
+    <div class="step-item" id="step-indicator-2">
+      <div class="step-num">2</div>
+      <div class="step-label">Add Phone Numbers</div>
+    </div>
+  </div>
 
   <!-- Upload card -->
   <div class="card" id="upload-card">
-    <h2>Upload Your List</h2>
+    <div class="card-label">Upload your list</div>
 
     <div class="upload-zone" id="drop-zone">
       <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
       <div class="upload-icon">📂</div>
-      <p>Drag & drop your Excel file here<br>or click to browse</p>
+      <p><span>Drop your file here</span><br>or click to browse — .xlsx, .xls, .csv</p>
       <div class="file-name" id="file-label"></div>
     </div>
 
     <div class="field">
       <label>Tax Year to Target</label>
-      <input type="number" id="tax-year" value="2022" min="2000" max="2099" />
+      <input type="number" id="tax-year" value="2023" min="2000" max="2099" />
     </div>
 
-    <button class="btn" id="process-btn" disabled>Process My List</button>
+    <button class="btn-primary" id="process-btn" disabled>Process My List</button>
     <div class="error-box" id="error-box"></div>
   </div>
 
   <!-- Progress card -->
-  <div class="card" id="progress-section">
-    <h2>Processing</h2>
-    <div class="progress-bar-wrap">
-      <div class="progress-bar" id="progress-bar"></div>
+  <div class="card" id="progress-card" style="display:none;">
+    <div class="card-label">Processing</div>
+    <div class="progress-wrap">
+      <div class="progress-track"><div class="progress-fill" id="progress-bar"></div></div>
+      <p class="progress-text" id="progress-label">Uploading file...</p>
     </div>
-    <p class="progress-label" id="progress-label">Uploading file...</p>
   </div>
 
   <!-- Results card -->
-  <div class="card" id="results-section">
-    <h2>Results</h2>
+  <div class="card" id="results-card" style="display:none;">
+    <div class="card-label">Results</div>
+
     <div class="stat-grid">
       <div class="stat-box">
-        <div class="value" id="stat-original">—</div>
-        <div class="label">Original Rows</div>
+        <div class="stat-value" id="stat-original">—</div>
+        <div class="stat-label">Original Rows</div>
       </div>
       <div class="stat-box">
-        <div class="value" id="stat-year">—</div>
-        <div class="label">Removed (wrong year)</div>
+        <div class="stat-value" id="stat-year">—</div>
+        <div class="stat-label">Wrong Year</div>
       </div>
       <div class="stat-box">
-        <div class="value" id="stat-biz">—</div>
-        <div class="label">Removed (businesses)</div>
+        <div class="stat-value" id="stat-biz">—</div>
+        <div class="stat-label">Businesses Removed</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-cannabis">—</div>
+        <div class="stat-label">Cannabis Removed</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-deceased">—</div>
+        <div class="stat-label">Deceased Flagged</div>
       </div>
       <div class="stat-box highlight">
-        <div class="value" id="stat-final">—</div>
-        <div class="label">Clean Leads Ready</div>
-      </div>
-      <div class="stat-box">
-        <div class="value" id="stat-phone">—</div>
-        <div class="label">With Phone</div>
-      </div>
-      <div class="stat-box">
-        <div class="value" id="stat-nophone">—</div>
-        <div class="label">Need Phone</div>
+        <div class="stat-value" id="stat-final">—</div>
+        <div class="stat-label">Clean Leads Ready</div>
       </div>
     </div>
 
-    <a class="download-btn" id="download-btn" href="#">⬇ Download Clean List</a>
-    <button class="reset-btn" id="reset-btn">Process Another List</button>
+    <a class="btn-download" id="download-btn" href="#" download>↓ Download Clean List</a>
+
+    <div class="divider">optional — step 2</div>
+
+    <div class="skiptrace-box">
+      <span class="pill pill-warn" id="skip-badge">API not configured</span>
+      <h3>Add Phone Numbers</h3>
+      <p>Run skip tracing on your <strong id="skip-count">—</strong> clean leads to append up to 8 phone numbers per owner. Only leads without existing numbers are sent.</p>
+
+      <div id="skiptrace-progress" style="display:none; margin-bottom:16px;">
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-fill" style="width:80%;"></div>
+          </div>
+          <p class="progress-text">Running skip tracing — this may take a few minutes...</p>
+        </div>
+      </div>
+
+      <button class="btn-phone" id="btn-skiptrace" disabled onclick="runSkipTrace()">
+        📞 &nbsp;Add Phone Numbers
+      </button>
+      <div class="error-box" id="error-skiptrace"></div>
+
+      <div class="skiptrace-results" id="skiptrace-results">
+        <h4>Skip Tracing Complete</h4>
+        <div class="stat-grid" style="margin-bottom:16px;">
+          <div class="stat-box">
+            <div class="stat-value" id="stat-matched">—</div>
+            <div class="stat-label">Numbers Found</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-sent">—</div>
+            <div class="stat-label">Records Sent</div>
+          </div>
+        </div>
+        <a class="btn-download" id="download-enriched" href="#" download>
+          ↓ Download List with Phone Numbers
+        </a>
+      </div>
+    </div>
+
+    <button class="btn-reset" id="reset-btn">Process another list</button>
   </div>
 
-  <footer>LeadCleaner Pro — Built for Daryl Moore Real Estate</footer>
+  <footer>LeadCleaner Pro &nbsp;·&nbsp; <span>Built for Daryl Moore Real Estate</span></footer>
 
   <script>
-    const fileInput = document.getElementById('file-input');
-    const fileLabel = document.getElementById('file-label');
+    const fileInput  = document.getElementById('file-input');
+    const fileLabel  = document.getElementById('file-label');
     const processBtn = document.getElementById('process-btn');
-    const dropZone = document.getElementById('drop-zone');
-    const errorBox = document.getElementById('error-box');
+    const dropZone   = document.getElementById('drop-zone');
+    let currentJobId = null;
 
-    // Drag & drop
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
     dropZone.addEventListener('drop', e => {
-      e.preventDefault();
-      dropZone.classList.remove('drag-over');
-      if (e.dataTransfer.files.length) {
-        fileInput.files = e.dataTransfer.files;
-        onFileSelected();
-      }
+      e.preventDefault(); dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; onFileSelected(); }
     });
-
     fileInput.addEventListener('change', onFileSelected);
 
     function onFileSelected() {
       const f = fileInput.files[0];
-      if (f) {
-        fileLabel.textContent = f.name;
-        processBtn.disabled = false;
-        errorBox.style.display = 'none';
-      }
-    }
-
-    function showError(msg) {
-      errorBox.textContent = msg;
-      errorBox.style.display = 'block';
+      if (f) { fileLabel.textContent = '✓ ' + f.name; processBtn.disabled = false; hide('error-box'); }
     }
 
     function setProgress(pct, label) {
@@ -369,64 +464,109 @@
       document.getElementById('progress-label').textContent = label;
     }
 
+    function show(id) { document.getElementById(id).style.display = 'block'; }
+    function hide(id) { document.getElementById(id).style.display = 'none'; }
+    function showError(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display = 'block'; }
+
+    function setStepDone(n) {
+      const el = document.getElementById(`step-indicator-${n}`);
+      el.className = 'step-item done';
+      el.querySelector('.step-num').textContent = '✓';
+    }
+    function setStepActive(n) {
+      document.getElementById(`step-indicator-${n}`).className = 'step-item active';
+    }
+
     processBtn.addEventListener('click', async () => {
       const file = fileInput.files[0];
       if (!file) return;
 
-      const taxYear = document.getElementById('tax-year').value;
-      errorBox.style.display = 'none';
-
-      // Switch to progress view
-      document.getElementById('upload-card').style.display = 'none';
-      document.getElementById('progress-section').style.display = 'block';
+      hide('error-box');
+      hide('upload-card');
+      show('progress-card');
       setProgress(10, 'Uploading file...');
 
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('tax_year', taxYear);
+      formData.append('tax_year', document.getElementById('tax-year').value);
 
       try {
         setProgress(30, 'Filtering by tax year...');
         const res = await fetch('/process', { method: 'POST', body: formData });
-        setProgress(70, 'Removing businesses & LLCs...');
+        setProgress(65, 'Removing businesses, LLCs & cannabis...');
         const data = await res.json();
-        setProgress(100, 'Done!');
+        setProgress(90, 'Flagging deceased owners...');
 
         if (!data.success) {
-          document.getElementById('upload-card').style.display = 'block';
-          document.getElementById('progress-section').style.display = 'none';
-          showError(data.error || 'Something went wrong.');
+          show('upload-card'); hide('progress-card');
+          showError('error-box', data.error || 'Something went wrong.');
           return;
         }
 
-        // Populate results
+        setProgress(100, 'Done!');
         const s = data.stats;
+        currentJobId = data.job_id;
+
         document.getElementById('stat-original').textContent = s.original.toLocaleString();
-        document.getElementById('stat-year').textContent = s.removed_year.toLocaleString();
-        document.getElementById('stat-biz').textContent = s.removed_business.toLocaleString();
-        document.getElementById('stat-final').textContent = s.final.toLocaleString();
-        document.getElementById('stat-phone').textContent = s.with_phone.toLocaleString();
-        document.getElementById('stat-nophone').textContent = s.without_phone.toLocaleString();
-        document.getElementById('download-btn').href = '/download/' + data.download_file;
+        document.getElementById('stat-year').textContent     = s.removed_year.toLocaleString();
+        document.getElementById('stat-biz').textContent      = s.removed_business.toLocaleString();
+        document.getElementById('stat-cannabis').textContent = (s.removed_cannabis || 0).toLocaleString();
+        document.getElementById('stat-deceased').textContent = (s.deceased_flagged || 0).toLocaleString();
+        document.getElementById('stat-final').textContent    = s.final.toLocaleString();
+        document.getElementById('skip-count').textContent    = s.final.toLocaleString();
+        document.getElementById('download-btn').href         = '/download/' + data.download_file;
 
-        setTimeout(() => {
-          document.getElementById('progress-section').style.display = 'none';
-          document.getElementById('results-section').style.display = 'block';
-        }, 600);
+        const skipBtn   = document.getElementById('btn-skiptrace');
+        const skipBadge = document.getElementById('skip-badge');
+        if (data.skip_trace_available) {
+          skipBadge.textContent = 'Ready'; skipBadge.className = 'pill pill-ready'; skipBtn.disabled = false;
+        } else {
+          skipBadge.textContent = 'API not configured'; skipBadge.className = 'pill pill-warn'; skipBtn.disabled = true;
+        }
 
-      } catch (err) {
-        document.getElementById('upload-card').style.display = 'block';
-        document.getElementById('progress-section').style.display = 'none';
-        showError('Connection error. Make sure the app is running.');
+        setStepDone(1); setStepActive(2);
+
+        setTimeout(() => { hide('progress-card'); show('results-card'); }, 500);
+
+      } catch {
+        show('upload-card'); hide('progress-card');
+        showError('error-box', 'Connection error. Make sure the app is running.');
       }
     });
 
+    async function runSkipTrace() {
+      if (!currentJobId) return;
+      const btn = document.getElementById('btn-skiptrace');
+      btn.disabled = true;
+      show('skiptrace-progress');
+      hide('error-skiptrace');
+
+      try {
+        const res  = await fetch(`/skiptrace/${currentJobId}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Skip tracing failed');
+
+        document.getElementById('stat-matched').textContent = (data.trace_stats.records_matched || 0).toLocaleString();
+        document.getElementById('stat-sent').textContent    = (data.trace_stats.records_sent    || 0).toLocaleString();
+        document.getElementById('download-enriched').href   = '/download/' + data.download_file;
+        show('skiptrace-results');
+      } catch (err) {
+        showError('error-skiptrace', err.message);
+        btn.disabled = false;
+      } finally {
+        hide('skiptrace-progress');
+      }
+    }
+
     document.getElementById('reset-btn').addEventListener('click', () => {
-      document.getElementById('results-section').style.display = 'none';
-      document.getElementById('upload-card').style.display = 'block';
-      fileInput.value = '';
-      fileLabel.textContent = '';
-      processBtn.disabled = true;
+      hide('results-card'); show('upload-card');
+      hide('skiptrace-results');
+      document.getElementById('step-indicator-1').className = 'step-item active';
+      document.getElementById('step-indicator-1').querySelector('.step-num').textContent = '1';
+      document.getElementById('step-indicator-2').className = 'step-item';
+      document.getElementById('step-indicator-2').querySelector('.step-num').textContent = '2';
+      fileInput.value = ''; fileLabel.textContent = '';
+      processBtn.disabled = true; currentJobId = null;
     });
   </script>
 </body>
