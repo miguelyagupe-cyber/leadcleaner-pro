@@ -5,11 +5,6 @@ import os
 import uuid
 import json
 import requests
-import oscn.find as oscn_find
-import oscn.request as oscn_request
-import oscn.parse as oscn_parse
-import threading
-import time as time_module
 from datetime import datetime
 
 app = Flask(__name__)
@@ -77,8 +72,12 @@ def find_column(df, keywords):
     ignoring spaces). Handles variants like 'Owner Name', 'PROPERTY OWNER NAME',
     'OwnerName', 'TotalDue', 'Total Due', etc."""
     for col in df.columns:
-        normalized = re.sub(r'[^A-Z]', '', str(col).upper())
-        if all(re.sub(r'[^A-Z]', '', kw.upper()) in normalized for kw in keywords):
+        normalized = re.sub(r'[^A-Z0-9]', '', str(col).upper())
+        for kw in keywords:
+            kw_norm = re.sub(r'[^A-Z0-9]', '', kw.upper())
+            if not kw_norm or kw_norm not in normalized:
+                break
+        else:
             return col
     return None
 
@@ -121,6 +120,89 @@ def is_likely_deceased(name, comments=None):
     return False
 
 
+def reorder_columns_for_readability(df, owner_col, total_due_col):
+    """Push the columns a real-estate investor actually looks at first
+    (owner, deceased flag, amount owed, phone, address), and push
+    technical/GIS columns (PID, legal description, SecTwnRng, etc.) to the end."""
+    priority_names = []
+    for candidate in [
+        owner_col,
+        'Deceased Owner (Flagged)',
+        total_due_col,
+        find_column(df, ['PHONE']),
+        find_column(df, ['ADDRESS']) or find_column(df, ['ST_NO']),
+        find_column(df, ['ST_NAME']),
+        find_column(df, ['ST_STREET', 'TYPE']),
+        find_column(df, ['OWNR_ADDR', '6']),
+        find_column(df, ['OWNR_ADDR', 'ST']),
+        find_column(df, ['ZIP']),
+    ]:
+        if candidate and candidate in df.columns and candidate not in priority_names:
+            priority_names.append(candidate)
+
+    remaining = [c for c in df.columns if c not in priority_names]
+    return df[priority_names + remaining]
+
+
+def save_excel_formatted(sheets: dict, output_path):
+    """Write a dict of {sheet_name: DataFrame} to xlsx with a clean,
+    readable look: bold header row, frozen header, auto-sized columns."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        for sheet_name, sheet_df in sheets.items():
+            sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            ws = writer.sheets[sheet_name]
+
+            header_fill = PatternFill(start_color='1F1B16', end_color='1F1B16', fill_type='solid')
+            header_font = Font(bold=True, color='D4AF37')
+            for cell in ws[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(vertical='center')
+
+            ws.freeze_panes = 'A2'
+            ws.auto_filter.ref = ws.dimensions
+
+            for i, col in enumerate(sheet_df.columns, start=1):
+                max_len = max(
+                    [len(str(col))] + [len(str(v)) for v in sheet_df[col].astype(str).head(500)]
+                )
+                ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 10), 45)
+
+            ws.row_dimensions[1].height = 20
+
+
+def compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col):
+    """
+    Filtro 1 — sinal fraco e gratuito de 'proprietário provavelmente ausente
+    ou falecido', baseado só nos dados que o condado já fornece:
+      - morada de correspondência contém 'C/O' ou 'PO BOX'
+      - cidade de correspondência difere da cidade do imóvel
+
+    Isto NÃO confirma óbito — é só um filtro de prioridade para reduzir
+    o volume que precisa de verificação mais cara (OK2Explore, OSCN, etc.)
+    """
+    n = len(df)
+    if not (mail_addr_col and mail_city_col and prop_city_col):
+        return pd.Series([False] * n, index=df.index)
+
+    addr = df[mail_addr_col].fillna('').astype(str).str.upper()
+    co_po = addr.str.contains(r'\bC/?O\b|\bP\.?O\.?\s*BOX\b', regex=True)
+
+    prop_city = (
+        df[prop_city_col].fillna('').astype(str).str.upper()
+        .str.replace('CITY OF ', '', regex=False)
+        .str.replace(' COUNTY', '', regex=False)
+        .str.strip()
+    )
+    mail_city = df[mail_city_col].fillna('').astype(str).str.upper().str.strip()
+    mismatch = (prop_city != '') & (mail_city != '') & (prop_city != mail_city)
+
+    return co_po | mismatch
+
+
 def clean_leads(df, tax_year):
     stats = {'original': len(df)}
 
@@ -136,6 +218,9 @@ def clean_leads(df, tax_year):
     total_due_col = find_column(df, ['TOTAL', 'DUE'])
     comments_col = find_column(df, ['COMMENT'])
     tax_col = find_column(df, ['TAX', 'YEAR'])
+    mail_addr_col = find_column(df, ['ADDRESS'])
+    mail_city_col = find_column(df, ['OWNR_ADDR', '6'])
+    prop_city_col = find_column(df, ['ST_CITY'])
 
     # Detect tax year column (only filters if the column actually exists)
     if tax_col:
@@ -170,9 +255,23 @@ def clean_leads(df, tax_year):
     )
     stats['deceased_flagged'] = int(df['_deceased'].sum())
 
-    # Build the separate "deceased owners" tab Daryl asked for
-    deceased_df = df[df['_deceased']].drop(columns=['_deceased']).copy()
-    df = df.drop(columns=['_deceased'])
+    # Filtro 1 — sinal fraco de morada suspeita (C/O, PO BOX, cidade divergente)
+    df['_absentee_signal'] = compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col)
+    df['Absentee/Suspicious Mailing (Verify)'] = df['_absentee_signal'].map(
+        {True: 'YES - Verify', False: ''}
+    )
+    stats['absentee_signal_flagged'] = int(df['_absentee_signal'].sum())
+
+    # Build the separate "deceased owners" tab Daryl asked for (regex-confirmed)
+    deceased_df = df[df['_deceased']].drop(columns=['_deceased', '_absentee_signal']).copy()
+
+    # Build the "suspected — verify manually" tab: heuristic-flagged owners
+    # who are NOT already in the regex-confirmed deceased tab (avoid duplicates)
+    suspected_df = df[df['_absentee_signal'] & ~df['_deceased']].drop(
+        columns=['_deceased', '_absentee_signal']
+    ).copy()
+
+    df = df.drop(columns=['_deceased', '_absentee_signal'])
 
     # Remove completely empty rows
     df = df.dropna(how='all')
@@ -182,6 +281,7 @@ def clean_leads(df, tax_year):
     if total_due_col:
         df = df.sort_values(total_due_col, ascending=False)
         deceased_df = deceased_df.sort_values(total_due_col, ascending=False) if len(deceased_df) else deceased_df
+        suspected_df = suspected_df.sort_values(total_due_col, ascending=False) if len(suspected_df) else suspected_df
 
     stats['removed_year']     = stats['original'] - stats['after_year_filter']
     stats['removed_business'] = stats['after_year_filter'] - stats['after_business_filter']
@@ -190,7 +290,16 @@ def clean_leads(df, tax_year):
     stats['without_phone']    = stats['final'] - stats['with_phone']
 
     stats = {k: int(v) for k, v in stats.items()}
-    return df, deceased_df, stats
+
+    # Reorder columns so the useful ones (owner, deceased flag, amount owed,
+    # phone, address) come first and technical/GIS columns come last
+    df = reorder_columns_for_readability(df, owner_col, total_due_col)
+    if len(deceased_df):
+        deceased_df = reorder_columns_for_readability(deceased_df, owner_col, total_due_col)
+    if len(suspected_df):
+        suspected_df = reorder_columns_for_readability(suspected_df, owner_col, total_due_col)
+
+    return df, deceased_df, suspected_df, stats
 
 
 # ─── SKIP TRACING ─────────────────────────────────────────────────────────────
@@ -349,7 +458,7 @@ def process():
         return jsonify({'error': f'Could not read file: {str(e)}'}), 400
 
     try:
-        cleaned_df, deceased_df, stats = clean_leads(df, tax_year)
+        cleaned_df, deceased_df, suspected_df, stats = clean_leads(df, tax_year)
     except Exception as e:
         return jsonify({'error': f'Error during cleaning: {str(e)}', 'columns_found': list(df.columns)}), 500
 
@@ -357,10 +466,16 @@ def process():
     output_filename = f'Clean_Leads_{tax_year}_{date_str}_{uid}.xlsx'
     output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
-    # Write two tabs: "All Leads" and "Deceased Owners" (as Daryl requested)
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        cleaned_df.to_excel(writer, sheet_name='All Leads', index=False)
-        deceased_df.to_excel(writer, sheet_name='Deceased Owners', index=False)
+    # Write three tabs: "All Leads", "Deceased Owners" (regex-confirmed), and
+    # "Suspected - Verify Manually" (heuristic-flagged, needs OK2Explore/OSCN/etc.)
+    save_excel_formatted(
+        {
+            'All Leads': cleaned_df,
+            'Deceased Owners': deceased_df,
+            'Suspected - Verify Manually': suspected_df,
+        },
+        output_path
+    )
 
     job_meta = {
         'uid': uid,
@@ -420,281 +535,6 @@ def download(filename):
     if not os.path.exists(filepath):
         return 'File not found', 404
     return send_file(filepath, as_attachment=True, download_name=safe_name)
-
-
-@app.route('/test-oscn', methods=['GET'])
-def test_oscn():
-    """
-    Rota de diagnostico: testa a pesquisa por nome no OSCN, sem
-    misturar parametros 'raw' (dcct) com os 'amigaveis' (last_name,
-    first_name), que a lib oscn nao suporta bem em conjunto.
-    Uso: GET /test-oscn?last=SMITH&first=JOHN
-    """
-    last_name = request.args.get('last', 'SMITH')
-    first_name = request.args.get('first', '')
-
-    try:
-        results = oscn_find.CaseIndexes(
-            county='tulsa',
-            last_name=last_name,
-            first_name=first_name,
-        )
-        all_results = list(results)
-        pb_results = [r for r in all_results if '-PB-' in r]
-
-        return jsonify({
-            'success': True,
-            'searched': {'last_name': last_name, 'first_name': first_name},
-            'num_results_total': len(all_results),
-            'num_results_pb': len(pb_results),
-            'sample_all_results': all_results[:10],
-            'pb_results': pb_results[:10],
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'error_type': type(e).__name__,
-            'searched': {'last_name': last_name, 'first_name': first_name},
-        }), 500
-
-
-@app.route('/test-network', methods=['GET'])
-def test_network():
-    """
-    Testa a ligacao de rede em bruto ao OSCN, sem passar pela lib oscn
-    (que engole erros de ligacao). Equivalente ao 'curl -v' que fizemos
-    localmente, mas correndo a partir do Render.
-    """
-    try:
-        resp = requests.get(
-            'https://www.oscn.net/dockets/Search.aspx',
-            timeout=15,
-            headers={'User-Agent': 'Mozilla/5.0 (LeadCleanerPro diagnostic)'}
-        )
-        return jsonify({
-            'success': True,
-            'status_code': resp.status_code,
-            'content_length': len(resp.text),
-            'content_preview': resp.text[:200],
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'error_type': type(e).__name__,
-        }), 500
-
-
-# ─── PROBATE MATCHING (background job) ──────────────────────────────────────
-
-probate_jobs = {}
-probate_jobs_lock = threading.Lock()
-
-RATE_LIMIT_SECONDS = 1.0
-
-
-def _parse_owner_name(raw_name):
-    import re as re_mod
-    import pandas as pd_mod
-    if pd_mod.isna(raw_name):
-        return None, None
-    name = str(raw_name).strip()
-    name = re_mod.split(r'\s*&\s*|\s+AND\s+', name, flags=re_mod.IGNORECASE)[0].strip()
-    name = re_mod.sub(
-        r'\b(ESTATE|TRUST|TRUSTEE|LE|LIFE ESTATE|HEIRS? OF|PR OF THE ESTATE)\b',
-        '', name, flags=re_mod.IGNORECASE
-    ).strip(' ,')
-    if ',' in name:
-        last, _, rest = name.partition(',')
-        first = rest.strip().split()[0] if rest.strip() else ''
-        return last.strip(), first.strip()
-    else:
-        parts = name.split()
-        if len(parts) >= 2:
-            return parts[-1], parts[0]
-        elif parts:
-            return parts[0], ''
-        return None, None
-
-
-def _search_probate(last_name, first_name):
-    """Pesquisa PB no Tulsa County. NAO usar dcct= aqui -- a lib oscn
-    ignora last_name/first_name quando um parametro 'raw' como dcct
-    e passado ao mesmo tempo. Filtramos -PB- no resultado em vez disso."""
-    if not last_name:
-        return []
-    try:
-        results = oscn_find.CaseIndexes(
-            county='tulsa',
-            last_name=last_name,
-            first_name=first_name or '',
-        )
-        return [r for r in list(results) if '-PB-' in r]
-    except Exception:
-        return []
-
-
-def _get_personal_representative(case_index):
-    try:
-        case = oscn_request.Case(case_index)
-        parties = oscn_parse.parties(case.text)
-        for p in parties:
-            role = str(p.get('type', '')).upper()
-            if 'PERSONAL REP' in role or 'EXECUTOR' in role or 'ADMINISTRATOR' in role:
-                return p.get('name', '')
-        return '; '.join(p.get('name', '') for p in parties) if parties else ''
-    except Exception as e:
-        return f"[erro ao abrir processo: {e}]"
-
-
-def _oscn_case_url(case_index):
-    """Constroi o link direto para consulta manual no site do OSCN.
-    Formato do case_index: 'tulsa-PB-2023-724' -> db=tulsa, number=PB-2023-724
-    """
-    try:
-        parts = case_index.split('-', 1)
-        db = parts[0]
-        number = parts[1]
-        return f"https://www.oscn.net/dockets/GetCaseInformation.aspx?db={db}&number={number}"
-    except Exception:
-        return ''
-
-
-def _run_probate_job(job_id, df, owner_col, output_path):
-    """
-    NOTA: nao tentamos abrir o detalhe de cada processo (GetCaseInformation.aspx)
-    porque essa pagina do OSCN esta protegida por Cloudflare Turnstile (CAPTCHA),
-    o que impede acesso automatizado. Confirmar o Personal Representative de cada
-    processo tem de ser feito manualmente, atraves do link fornecido.
-    """
-    import pandas as pd_mod
-    total = len(df)
-    match_rows = []
-
-    with probate_jobs_lock:
-        probate_jobs[job_id]['total'] = total
-
-    for i, row in df.iterrows():
-        owner_name = row.get(owner_col, '')
-        last, first = _parse_owner_name(owner_name)
-
-        if last:
-            cases = _search_probate(last, first)
-            time_module.sleep(RATE_LIMIT_SECONDS)
-            for case_index in cases:
-                match_rows.append({
-                    'Owner Name (lista)': owner_name,
-                    'Nome pesquisado': f"{first} {last}",
-                    'OSCN Case Index': case_index,
-                    'Link OSCN (verificar manualmente)': _oscn_case_url(case_index),
-                })
-
-        with probate_jobs_lock:
-            probate_jobs[job_id]['processed'] = i + 1
-            probate_jobs[job_id]['matches_found'] = len(match_rows)
-
-        if (i + 1) % 25 == 0:
-            pd_mod.DataFrame(match_rows).to_excel(output_path, index=False)
-
-    pd_mod.DataFrame(match_rows).to_excel(output_path, index=False)
-
-    with probate_jobs_lock:
-        probate_jobs[job_id]['status'] = 'done'
-        probate_jobs[job_id]['matches_found'] = len(match_rows)
-
-
-@app.route('/probate-match/<job_id>', methods=['POST'])
-def start_probate_match(job_id):
-    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
-    if not os.path.exists(meta_path):
-        return jsonify({'error': 'Job not found. Processa a lista primeiro.'}), 404
-
-    with probate_jobs_lock:
-        if job_id in probate_jobs and probate_jobs[job_id]['status'] == 'running':
-            return jsonify({'error': 'Job de probate ja em curso para este job_id.'}), 400
-
-    with open(meta_path) as f:
-        meta = json.load(f)
-
-    clean_path = os.path.join(app.config['OUTPUT_FOLDER'], meta['output_filename'])
-    if not os.path.exists(clean_path):
-        return jsonify({'error': 'Ficheiro limpo nao encontrado.'}), 404
-
-    df = pd.read_excel(clean_path, engine='openpyxl', sheet_name='All Leads')
-    owner_col = find_column(df, ['OWNER', 'NAME'])
-    if owner_col is None:
-        return jsonify({'error': 'Coluna de proprietario nao encontrada.'}), 500
-
-    output_filename = f'Probate_Matches_{job_id}.xlsx'
-    output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
-
-    with probate_jobs_lock:
-        probate_jobs[job_id] = {
-            'status': 'running',
-            'processed': 0,
-            'total': len(df),
-            'matches_found': 0,
-            'output_filename': output_filename,
-        }
-
-    thread = threading.Thread(
-        target=_run_probate_job,
-        args=(job_id, df, owner_col, output_path),
-        daemon=True
-    )
-    thread.start()
-
-    return jsonify({'success': True, 'message': 'Job de probate iniciado.', 'job_id': job_id})
-
-
-@app.route('/probate-match/<job_id>/status', methods=['GET'])
-def probate_match_status(job_id):
-    with probate_jobs_lock:
-        job = probate_jobs.get(job_id)
-    if job is None:
-        return jsonify({'error': 'Job nao encontrado.'}), 404
-    return jsonify(job)
-
-
-@app.route('/test-oscn-case', methods=['GET'])
-def test_oscn_case():
-    """
-    Diagnostico: busca um processo especifico do OSCN e mostra exatamente
-    onde a extracao de partes falha (pedido vazio vs parsing sem resultado).
-    Uso: GET /test-oscn-case?case=tulsa-PB-2023-724
-    """
-    case_index = request.args.get('case', '')
-    if not case_index:
-        return jsonify({'error': 'Falta o parametro ?case=tulsa-PB-XXXX-YYYY'}), 400
-
-    result = {'case_index': case_index}
-
-    try:
-        case = oscn_request.Case(case_index)
-        case_text = getattr(case, 'text', None)
-        result['fetch_success'] = True
-        result['case_text_length'] = len(case_text) if case_text else 0
-        result['case_text_is_empty'] = not bool(case_text)
-        result['case_text_preview'] = case_text[:1500] if case_text else ''
-    except Exception as e:
-        result['fetch_success'] = False
-        result['fetch_error'] = str(e)
-        result['fetch_error_type'] = type(e).__name__
-        return jsonify(result), 500
-
-    try:
-        parties = oscn_parse.parties(case_text)
-        result['parse_success'] = True
-        result['num_parties_found'] = len(parties) if parties else 0
-        result['parties_raw'] = parties[:10] if parties else []
-    except Exception as e:
-        result['parse_success'] = False
-        result['parse_error'] = str(e)
-        result['parse_error_type'] = type(e).__name__
-
-    return jsonify(result)
 
 
 if __name__ == '__main__':
