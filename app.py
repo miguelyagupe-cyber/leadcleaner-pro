@@ -660,6 +660,7 @@ def test_oscn_case():
         result['fetch_success'] = True
         result['case_text_length'] = len(case_text) if case_text else 0
         result['case_text_is_empty'] = not bool(case_text)
+        result['case_text_preview'] = case_text[:1500] if case_text else ''
     except Exception as e:
         result['fetch_success'] = False
         result['fetch_error'] = str(e)
