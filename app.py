@@ -5,6 +5,7 @@ import os
 import uuid
 import json
 import requests
+import oscn.find as oscn_find
 from datetime import datetime
 
 app = Flask(__name__)
@@ -415,6 +416,46 @@ def download(filename):
     if not os.path.exists(filepath):
         return 'File not found', 404
     return send_file(filepath, as_attachment=True, download_name=safe_name)
+
+@app.route('/test-oscn', methods=['GET'])
+def test_oscn():
+    """
+    Rota de diagnóstico: testa se o servidor (Render) consegue mesmo
+    ligar-se ao OSCN, sem depender de VPN nem de estar em Portugal.
+    Uso: GET /test-oscn?last=SMITH&first=JOHN
+    """
+    last_name = request.args.get('last', 'SMITH')
+    first_name = request.args.get('first', '')
+
+    try:
+        results = oscn_find.CaseIndexes(
+            county='tulsa',
+            last_name=last_name,
+            first_name=first_name,
+            dcct='PB',
+            filed_after='',
+        )
+        results_list = list(results)
+
+        return jsonify({
+            'success': True,
+            'searched': {'last_name': last_name, 'first_name': first_name},
+            'num_results': len(results_list),
+            'results': results_list,
+            'warning': (
+                'Zero resultados para um apelido comum pode ser bloqueio '
+                'silencioso do OSCN, não ausência real de processos.'
+                if len(results_list) == 0 else None
+            )
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'searched': {'last_name': last_name, 'first_name': first_name},
+        }), 500
 
 
 if __name__ == '__main__':
