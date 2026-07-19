@@ -456,6 +456,33 @@ def test_oscn():
             'error_type': type(e).__name__,
             'searched': {'last_name': last_name, 'first_name': first_name},
         }), 500
+ 
+    
+@app.route('/test-network', methods=['GET'])
+def test_network():
+    """
+    Testa a ligação de rede em bruto ao OSCN, sem passar pela lib oscn
+    (que engole erros de ligação). Equivalente ao 'curl -v' que fizemos
+    localmente, mas correndo a partir do Render.
+    """
+    try:
+        resp = requests.get(
+            'https://www.oscn.net/dockets/Search.aspx',
+            timeout=15,
+            headers={'User-Agent': 'Mozilla/5.0 (LeadCleanerPro diagnostic)'}
+        )
+        return jsonify({
+            'success': True,
+            'status_code': resp.status_code,
+            'content_length': len(resp.text),
+            'content_preview': resp.text[:200],
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__,
+        }), 500
 
 
 if __name__ == '__main__':
