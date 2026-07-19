@@ -417,11 +417,13 @@ def download(filename):
         return 'File not found', 404
     return send_file(filepath, as_attachment=True, download_name=safe_name)
 
+
 @app.route('/test-oscn', methods=['GET'])
 def test_oscn():
     """
-    Rota de diagnóstico: testa se o servidor (Render) consegue mesmo
-    ligar-se ao OSCN, sem depender de VPN nem de estar em Portugal.
+    Rota de diagnostico: testa a pesquisa por nome no OSCN, sem
+    misturar parametros 'raw' (dcct) com os 'amigaveis' (last_name,
+    first_name), que a lib oscn nao suporta bem em conjunto.
     Uso: GET /test-oscn?last=SMITH&first=JOHN
     """
     last_name = request.args.get('last', 'SMITH')
@@ -432,21 +434,17 @@ def test_oscn():
             county='tulsa',
             last_name=last_name,
             first_name=first_name,
-            dcct='PB',
-            filed_after='',
         )
-        results_list = list(results)
+        all_results = list(results)
+        pb_results = [r for r in all_results if '-PB-' in r]
 
         return jsonify({
             'success': True,
             'searched': {'last_name': last_name, 'first_name': first_name},
-            'num_results': len(results_list),
-            'results': results_list,
-            'warning': (
-                'Zero resultados para um apelido comum pode ser bloqueio '
-                'silencioso do OSCN, não ausência real de processos.'
-                if len(results_list) == 0 else None
-            )
+            'num_results_total': len(all_results),
+            'num_results_pb': len(pb_results),
+            'sample_all_results': all_results[:10],
+            'pb_results': pb_results[:10],
         })
 
     except Exception as e:
@@ -456,13 +454,13 @@ def test_oscn():
             'error_type': type(e).__name__,
             'searched': {'last_name': last_name, 'first_name': first_name},
         }), 500
- 
-    
+
+
 @app.route('/test-network', methods=['GET'])
 def test_network():
     """
-    Testa a ligação de rede em bruto ao OSCN, sem passar pela lib oscn
-    (que engole erros de ligação). Equivalente ao 'curl -v' que fizemos
+    Testa a ligacao de rede em bruto ao OSCN, sem passar pela lib oscn
+    (que engole erros de ligacao). Equivalente ao 'curl -v' que fizemos
     localmente, mas correndo a partir do Render.
     """
     try:
