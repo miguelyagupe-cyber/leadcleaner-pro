@@ -641,5 +641,43 @@ def probate_match_status(job_id):
     return jsonify(job)
 
 
+@app.route('/test-oscn-case', methods=['GET'])
+def test_oscn_case():
+    """
+    Diagnostico: busca um processo especifico do OSCN e mostra exatamente
+    onde a extracao de partes falha (pedido vazio vs parsing sem resultado).
+    Uso: GET /test-oscn-case?case=tulsa-PB-2023-724
+    """
+    case_index = request.args.get('case', '')
+    if not case_index:
+        return jsonify({'error': 'Falta o parametro ?case=tulsa-PB-XXXX-YYYY'}), 400
+
+    result = {'case_index': case_index}
+
+    try:
+        case = oscn_request.Case(case_index)
+        case_text = getattr(case, 'text', None)
+        result['fetch_success'] = True
+        result['case_text_length'] = len(case_text) if case_text else 0
+        result['case_text_is_empty'] = not bool(case_text)
+    except Exception as e:
+        result['fetch_success'] = False
+        result['fetch_error'] = str(e)
+        result['fetch_error_type'] = type(e).__name__
+        return jsonify(result), 500
+
+    try:
+        parties = oscn_parse.parties(case_text)
+        result['parse_success'] = True
+        result['num_parties_found'] = len(parties) if parties else 0
+        result['parties_raw'] = parties[:10] if parties else []
+    except Exception as e:
+        result['parse_success'] = False
+        result['parse_error'] = str(e)
+        result['parse_error_type'] = type(e).__name__
+
+    return jsonify(result)
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
