@@ -549,7 +549,26 @@ def _get_personal_representative(case_index):
         return f"[erro ao abrir processo: {e}]"
 
 
+def _oscn_case_url(case_index):
+    """Constroi o link direto para consulta manual no site do OSCN.
+    Formato do case_index: 'tulsa-PB-2023-724' -> db=tulsa, number=PB-2023-724
+    """
+    try:
+        parts = case_index.split('-', 1)
+        db = parts[0]
+        number = parts[1]
+        return f"https://www.oscn.net/dockets/GetCaseInformation.aspx?db={db}&number={number}"
+    except Exception:
+        return ''
+
+
 def _run_probate_job(job_id, df, owner_col, output_path):
+    """
+    NOTA: nao tentamos abrir o detalhe de cada processo (GetCaseInformation.aspx)
+    porque essa pagina do OSCN esta protegida por Cloudflare Turnstile (CAPTCHA),
+    o que impede acesso automatizado. Confirmar o Personal Representative de cada
+    processo tem de ser feito manualmente, atraves do link fornecido.
+    """
     import pandas as pd_mod
     total = len(df)
     match_rows = []
@@ -565,13 +584,11 @@ def _run_probate_job(job_id, df, owner_col, output_path):
             cases = _search_probate(last, first)
             time_module.sleep(RATE_LIMIT_SECONDS)
             for case_index in cases:
-                pr_name = _get_personal_representative(case_index)
-                time_module.sleep(RATE_LIMIT_SECONDS)
                 match_rows.append({
                     'Owner Name (lista)': owner_name,
                     'Nome pesquisado': f"{first} {last}",
                     'OSCN Case Index': case_index,
-                    'Personal Representative': pr_name,
+                    'Link OSCN (verificar manualmente)': _oscn_case_url(case_index),
                 })
 
         with probate_jobs_lock:
