@@ -6,6 +6,10 @@ import uuid
 import json
 import requests
 import oscn.find as oscn_find
+import oscn.request as oscn_request
+import oscn.parse as oscn_parse
+import threading
+import time as time_module
 from datetime import datetime
 
 app = Flask(__name__)
@@ -481,6 +485,160 @@ def test_network():
             'error': str(e),
             'error_type': type(e).__name__,
         }), 500
+
+
+# ─── PROBATE MATCHING (background job) ──────────────────────────────────────
+
+probate_jobs = {}
+probate_jobs_lock = threading.Lock()
+
+RATE_LIMIT_SECONDS = 1.0
+
+
+def _parse_owner_name(raw_name):
+    import re as re_mod
+    import pandas as pd_mod
+    if pd_mod.isna(raw_name):
+        return None, None
+    name = str(raw_name).strip()
+    name = re_mod.split(r'\s*&\s*|\s+AND\s+', name, flags=re_mod.IGNORECASE)[0].strip()
+    name = re_mod.sub(
+        r'\b(ESTATE|TRUST|TRUSTEE|LE|LIFE ESTATE|HEIRS? OF|PR OF THE ESTATE)\b',
+        '', name, flags=re_mod.IGNORECASE
+    ).strip(' ,')
+    if ',' in name:
+        last, _, rest = name.partition(',')
+        first = rest.strip().split()[0] if rest.strip() else ''
+        return last.strip(), first.strip()
+    else:
+        parts = name.split()
+        if len(parts) >= 2:
+            return parts[-1], parts[0]
+        elif parts:
+            return parts[0], ''
+        return None, None
+
+
+def _search_probate(last_name, first_name):
+    """Pesquisa PB no Tulsa County. NAO usar dcct= aqui -- a lib oscn
+    ignora last_name/first_name quando um parametro 'raw' como dcct
+    e passado ao mesmo tempo. Filtramos -PB- no resultado em vez disso."""
+    if not last_name:
+        return []
+    try:
+        results = oscn_find.CaseIndexes(
+            county='tulsa',
+            last_name=last_name,
+            first_name=first_name or '',
+        )
+        return [r for r in list(results) if '-PB-' in r]
+    except Exception:
+        return []
+
+
+def _get_personal_representative(case_index):
+    try:
+        case = oscn_request.Case(case_index)
+        parties = oscn_parse.parties(case.text)
+        for p in parties:
+            role = str(p.get('type', '')).upper()
+            if 'PERSONAL REP' in role or 'EXECUTOR' in role or 'ADMINISTRATOR' in role:
+                return p.get('name', '')
+        return '; '.join(p.get('name', '') for p in parties) if parties else ''
+    except Exception as e:
+        return f"[erro ao abrir processo: {e}]"
+
+
+def _run_probate_job(job_id, df, owner_col, output_path):
+    import pandas as pd_mod
+    total = len(df)
+    match_rows = []
+
+    with probate_jobs_lock:
+        probate_jobs[job_id]['total'] = total
+
+    for i, row in df.iterrows():
+        owner_name = row.get(owner_col, '')
+        last, first = _parse_owner_name(owner_name)
+
+        if last:
+            cases = _search_probate(last, first)
+            time_module.sleep(RATE_LIMIT_SECONDS)
+            for case_index in cases:
+                pr_name = _get_personal_representative(case_index)
+                time_module.sleep(RATE_LIMIT_SECONDS)
+                match_rows.append({
+                    'Owner Name (lista)': owner_name,
+                    'Nome pesquisado': f"{first} {last}",
+                    'OSCN Case Index': case_index,
+                    'Personal Representative': pr_name,
+                })
+
+        with probate_jobs_lock:
+            probate_jobs[job_id]['processed'] = i + 1
+            probate_jobs[job_id]['matches_found'] = len(match_rows)
+
+        if (i + 1) % 25 == 0:
+            pd_mod.DataFrame(match_rows).to_excel(output_path, index=False)
+
+    pd_mod.DataFrame(match_rows).to_excel(output_path, index=False)
+
+    with probate_jobs_lock:
+        probate_jobs[job_id]['status'] = 'done'
+        probate_jobs[job_id]['matches_found'] = len(match_rows)
+
+
+@app.route('/probate-match/<job_id>', methods=['POST'])
+def start_probate_match(job_id):
+    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
+    if not os.path.exists(meta_path):
+        return jsonify({'error': 'Job not found. Processa a lista primeiro.'}), 404
+
+    with probate_jobs_lock:
+        if job_id in probate_jobs and probate_jobs[job_id]['status'] == 'running':
+            return jsonify({'error': 'Job de probate ja em curso para este job_id.'}), 400
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    clean_path = os.path.join(app.config['OUTPUT_FOLDER'], meta['output_filename'])
+    if not os.path.exists(clean_path):
+        return jsonify({'error': 'Ficheiro limpo nao encontrado.'}), 404
+
+    df = pd.read_excel(clean_path, engine='openpyxl', sheet_name='All Leads')
+    owner_col = find_column(df, ['OWNER', 'NAME'])
+    if owner_col is None:
+        return jsonify({'error': 'Coluna de proprietario nao encontrada.'}), 500
+
+    output_filename = f'Probate_Matches_{job_id}.xlsx'
+    output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+
+    with probate_jobs_lock:
+        probate_jobs[job_id] = {
+            'status': 'running',
+            'processed': 0,
+            'total': len(df),
+            'matches_found': 0,
+            'output_filename': output_filename,
+        }
+
+    thread = threading.Thread(
+        target=_run_probate_job,
+        args=(job_id, df, owner_col, output_path),
+        daemon=True
+    )
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Job de probate iniciado.', 'job_id': job_id})
+
+
+@app.route('/probate-match/<job_id>/status', methods=['GET'])
+def probate_match_status(job_id):
+    with probate_jobs_lock:
+        job = probate_jobs.get(job_id)
+    if job is None:
+        return jsonify({'error': 'Job nao encontrado.'}), 404
+    return jsonify(job)
 
 
 if __name__ == '__main__':
