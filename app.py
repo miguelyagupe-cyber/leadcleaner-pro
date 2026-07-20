@@ -35,6 +35,8 @@ BUSINESS_PATTERNS = [
     r'\bCHURCH\b', r'\bCHAPEL\b', r'\bMINISTRIES?\b',
     r'\bFOUNDATION\b', r'\bCATTLE\b', r'\bRANCH\b',
     r'\bFARMS?\b', r'\bCULTIVATION\b',
+    r'\bL\.?\s*P\.?\b',    # Limited Partnership (ex: 'OKLAHOMA L P')
+    r'\bATTY\b',            # escritórios de advocacia abreviados
 ]
 
 CANNABIS_PATTERNS = [
@@ -51,6 +53,12 @@ CANNABIS_PATTERNS = [
     r'\b420\b',
     r'\bGANJA\b',
     r'\bWEED\s+(CO|LLC|INC|CORP|GROUP)\b',
+    # Termos de gíria de dispensárias (ex: "MMA SKUNK GROW", "MMA BIG BUDS")
+    # — 'MMA' sozinho é ambíguo (pode ser nome/sigla legítima), por isso só
+    # conta como cannabis quando aparece junto de gíria específica do ramo.
+    r'\bMMA\b.*\b(SKUNK|GROW|GREEN\s*MEDS?|KUSH|BUDS?|DANK|OG)\b',
+    r'\b(SKUNK|KUSH|DANK)\b',   # baixo risco de serem apelidos reais
+    r'\bBUDS\b',                 # plural — 'Bud' sozinho é nickname comum, 'Buds' não
 ]
 
 DECEASED_PATTERNS = [
@@ -181,12 +189,15 @@ def compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col):
       - morada de correspondência contém 'C/O' ou 'PO BOX'
       - cidade de correspondência difere da cidade do imóvel
 
+    Devolve uma Series com: '' (sem sinal), 'Weak' (um dos dois sinais),
+    ou 'Strong' (os dois sinais ao mesmo tempo — muito mais fiável).
+
     Isto NÃO confirma óbito — é só um filtro de prioridade para reduzir
     o volume que precisa de verificação mais cara (OK2Explore, OSCN, etc.)
     """
     n = len(df)
     if not (mail_addr_col and mail_city_col and prop_city_col):
-        return pd.Series([False] * n, index=df.index)
+        return pd.Series([''] * n, index=df.index)
 
     addr = df[mail_addr_col].fillna('').astype(str).str.upper()
     co_po = addr.str.contains(r'\bC/?O\b|\bP\.?O\.?\s*BOX\b', regex=True)
@@ -200,7 +211,10 @@ def compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col):
     mail_city = df[mail_city_col].fillna('').astype(str).str.upper().str.strip()
     mismatch = (prop_city != '') & (mail_city != '') & (prop_city != mail_city)
 
-    return co_po | mismatch
+    strength = pd.Series([''] * n, index=df.index)
+    strength[co_po | mismatch] = 'Weak'
+    strength[co_po & mismatch] = 'Strong'
+    return strength
 
 
 def clean_leads(df, tax_year):
@@ -257,19 +271,22 @@ def clean_leads(df, tax_year):
 
     # Filtro 1 — sinal fraco de morada suspeita (C/O, PO BOX, cidade divergente)
     df['_absentee_signal'] = compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col)
-    df['Absentee/Suspicious Mailing (Verify)'] = df['_absentee_signal'].map(
-        {True: 'YES - Verify', False: ''}
-    )
-    stats['absentee_signal_flagged'] = int(df['_absentee_signal'].sum())
+    df['Absentee/Suspicious Mailing (Verify)'] = df['_absentee_signal']
+    stats['absentee_signal_strong'] = int((df['_absentee_signal'] == 'Strong').sum())
+    stats['absentee_signal_weak'] = int((df['_absentee_signal'] == 'Weak').sum())
 
     # Build the separate "deceased owners" tab Daryl asked for (regex-confirmed)
     deceased_df = df[df['_deceased']].drop(columns=['_deceased', '_absentee_signal']).copy()
 
     # Build the "suspected — verify manually" tab: heuristic-flagged owners
-    # who are NOT already in the regex-confirmed deceased tab (avoid duplicates)
-    suspected_df = df[df['_absentee_signal'] & ~df['_deceased']].drop(
-        columns=['_deceased', '_absentee_signal']
-    ).copy()
+    # who are NOT already in the regex-confirmed deceased tab (avoid duplicates),
+    # ordered so 'Strong' (both signals) comes before 'Weak' (one signal only)
+    has_signal = (df['_absentee_signal'] != '') & ~df['_deceased']
+    suspected_df = df[has_signal].drop(columns=['_deceased', '_absentee_signal']).copy()
+    if len(suspected_df):
+        strength_order = {'Strong': 0, 'Weak': 1}
+        suspected_df['_sort'] = suspected_df['Absentee/Suspicious Mailing (Verify)'].map(strength_order)
+        suspected_df = suspected_df.sort_values('_sort').drop(columns=['_sort'])
 
     df = df.drop(columns=['_deceased', '_absentee_signal'])
 
@@ -281,7 +298,10 @@ def clean_leads(df, tax_year):
     if total_due_col:
         df = df.sort_values(total_due_col, ascending=False)
         deceased_df = deceased_df.sort_values(total_due_col, ascending=False) if len(deceased_df) else deceased_df
-        suspected_df = suspected_df.sort_values(total_due_col, ascending=False) if len(suspected_df) else suspected_df
+        if len(suspected_df):
+            strength_order = {'Strong': 0, 'Weak': 1}
+            suspected_df['_sort'] = suspected_df['Absentee/Suspicious Mailing (Verify)'].map(strength_order)
+            suspected_df = suspected_df.sort_values(['_sort', total_due_col], ascending=[True, False]).drop(columns=['_sort'])
 
     stats['removed_year']     = stats['original'] - stats['after_year_filter']
     stats['removed_business'] = stats['after_year_filter'] - stats['after_business_filter']
