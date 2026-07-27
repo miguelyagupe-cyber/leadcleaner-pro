@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ 'Research Queue' if page_mode == 'research' else 'Leads' }} · LeadCleaner Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#0a0a0b; --sidebar:#0d0d0f; --surface:#111214; --raised:#16171a;
+      --hover:#1b1c20; --border:#25262b; --soft:#1c1d21; --gold:#c7a251;
+      --gold-bright:#d7b767; --gold-soft:rgba(199,162,81,.11); --text:#f1eee7;
+      --muted:#96979d; --dim:#66676e; --green:#65a879; --amber:#d0964b;
+      --red:#d8665c; --sidebar-width:244px;
+    }
+    * { box-sizing:border-box; }
+    html { color-scheme:dark; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px "DM Sans",system-ui,sans-serif; }
+    button,input,select,textarea { font:inherit; }
+    button { color:inherit; }
+    a { color:inherit; text-decoration:none; }
+    .shell { min-height:100vh; display:grid; grid-template-columns:var(--sidebar-width) 1fr; }
+    .sidebar { position:fixed; inset:0 auto 0 0; width:var(--sidebar-width); padding:26px 18px 20px; background:var(--sidebar); border-right:1px solid var(--soft); display:flex; flex-direction:column; z-index:20; }
+    .brand { height:48px; padding:0 10px; display:flex; align-items:center; gap:11px; margin-bottom:24px; }
+    .brand-mark { width:27px; height:27px; display:grid; place-items:center; border:1px solid var(--gold); color:var(--gold); font:17px "Newsreader",serif; transform:rotate(45deg); }
+    .brand-mark span { transform:rotate(-45deg); }
+    .brand-name { font-weight:600; letter-spacing:-.01em; }
+    .brand-name small { display:block; margin-top:1px; color:var(--dim); font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
+    .nav-section { margin-bottom:23px; }
+    .nav-label { padding:0 11px; margin-bottom:7px; color:#55565c; font-size:9px; font-weight:600; letter-spacing:.15em; text-transform:uppercase; }
+    .nav-item { width:100%; min-height:38px; padding:0 11px; border:0; border-radius:5px; background:transparent; color:#85868c; display:flex; align-items:center; gap:11px; cursor:pointer; text-align:left; transition:.16s; }
+    .nav-item:hover { background:var(--raised); color:var(--text); }
+    .nav-item.active { background:var(--gold-soft); color:var(--gold-bright); }
+    .nav-icon { width:16px; text-align:center; }
+    .sidebar-footer { margin-top:auto; border-top:1px solid var(--soft); padding-top:16px; }
+    .user { display:flex; align-items:center; gap:10px; padding:7px 9px; }
+    .avatar { width:30px; height:30px; border-radius:50%; background:#222329; border:1px solid #34353a; display:grid; place-items:center; color:var(--gold); font-size:11px; }
+    .user strong { display:block; font-size:12px; font-weight:500; }
+    .user small { color:var(--dim); font-size:10px; }
+    main { grid-column:2; min-width:0; }
+    .topbar { height:66px; padding:0 36px; border-bottom:1px solid var(--soft); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; background:rgba(10,10,11,.95); backdrop-filter:blur(12px); z-index:10; }
+    .crumb { color:var(--muted); font-size:12px; }
+    .crumb span { color:#4f5056; margin:0 8px; }
+    .status { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; }
+    .status::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--green); }
+    .content { padding:39px 38px 70px; max-width:1600px; margin:auto; }
+    .heading { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:25px; }
+    .eyebrow { margin-bottom:8px; color:var(--gold); font-size:9px; font-weight:600; letter-spacing:.15em; text-transform:uppercase; }
+    h1 { margin:0; font:400 38px/1.05 "Newsreader",serif; letter-spacing:-.02em; }
+    .heading p { margin:7px 0 0; color:var(--muted); font-size:12px; }
+    .count-box { text-align:right; }
+    .count-box strong { display:block; font:400 26px "Newsreader",serif; color:var(--gold-bright); }
+    .count-box span { color:var(--dim); font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
+    .toolbar { padding:12px; margin-bottom:13px; border:1px solid var(--border); border-radius:6px; background:var(--surface); display:flex; align-items:center; gap:8px; }
+    .search { flex:1; min-width:230px; height:39px; padding:0 13px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); outline:0; }
+    .search:focus { border-color:var(--gold); }
+    select { height:39px; min-width:145px; padding:0 30px 0 11px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--muted); outline:0; }
+    .clear { height:39px; padding:0 13px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--dim); cursor:pointer; }
+    .table-panel { border:1px solid var(--border); border-radius:6px; background:var(--surface); overflow:hidden; }
+    .table-wrap { overflow:auto; }
+    table { width:100%; min-width:1100px; border-collapse:collapse; }
+    th { height:41px; padding:0 14px; border-bottom:1px solid var(--border); background:#0f1012; color:#5f6067; font-size:9px; font-weight:600; letter-spacing:.09em; text-align:left; text-transform:uppercase; white-space:nowrap; }
+    td { height:66px; padding:0 14px; border-bottom:1px solid var(--soft); color:var(--muted); font-size:11px; }
+    tbody tr { cursor:pointer; transition:.12s; }
+    tbody tr:hover { background:#151619; }
+    tbody tr:last-child td { border-bottom:0; }
+    .owner { color:var(--text); font-weight:500; }
+    .tax-id { display:block; margin-top:3px; color:#56575e; font-size:9px; }
+    .money { color:#d7d3c9; font-variant-numeric:tabular-nums; }
+    .pill { display:inline-flex; align-items:center; min-height:23px; padding:0 8px; border:1px solid var(--border); border-radius:12px; color:var(--muted); font-size:9px; text-transform:capitalize; white-space:nowrap; }
+    .pill.high,.pill.urgent { border-color:rgba(216,102,92,.3); background:rgba(216,102,92,.08); color:#dc8179; }
+    .pill.medium { border-color:rgba(208,150,75,.3); background:rgba(208,150,75,.08); color:#d5a15e; }
+    .signal { color:var(--gold); }
+    .muted { color:#55565c; }
+    .empty { height:280px; text-align:center; color:var(--dim); }
+    .pagination { min-height:54px; padding:0 15px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; color:var(--dim); font-size:10px; }
+    .page-buttons { display:flex; gap:6px; }
+    .page-button { height:30px; padding:0 11px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; }
+    .page-button:disabled { opacity:.35; cursor:not-allowed; }
+    .backdrop { position:fixed; inset:0; background:rgba(0,0,0,.48); opacity:0; pointer-events:none; transition:.2s; z-index:30; }
+    .backdrop.open { opacity:1; pointer-events:auto; }
+    .drawer { position:fixed; inset:0 0 0 auto; width:min(520px,100vw); padding:0; border-left:1px solid #303137; background:#101113; transform:translateX(100%); transition:.22s ease; z-index:40; overflow:auto; }
+    .drawer.open { transform:translateX(0); }
+    .drawer-header { min-height:78px; padding:18px 22px; border-bottom:1px solid var(--border); display:flex; align-items:flex-start; justify-content:space-between; position:sticky; top:0; background:rgba(16,17,19,.97); backdrop-filter:blur(10px); z-index:2; }
+    .drawer-header h2 { margin:0; font:400 23px "Newsreader",serif; }
+    .drawer-header p { margin:4px 0 0; color:var(--dim); font-size:10px; }
+    .close { border:0; background:transparent; color:var(--dim); font-size:22px; cursor:pointer; }
+    .drawer-body { padding:21px 22px 45px; }
+    .section { padding:0 0 22px; margin-bottom:22px; border-bottom:1px solid var(--soft); }
+    .section:last-child { border:0; }
+    .section-title { margin-bottom:13px; color:#6f7077; font-size:9px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; }
+    .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .field label { display:block; margin-bottom:6px; color:var(--dim); font-size:9px; text-transform:uppercase; }
+    .field select,.field input { width:100%; min-width:0; }
+    .details { display:grid; grid-template-columns:1fr 1fr; gap:15px 18px; }
+    .detail span { display:block; margin-bottom:3px; color:var(--dim); font-size:9px; text-transform:uppercase; }
+    .detail strong { display:block; color:#d8d5ce; font-size:11px; font-weight:500; overflow-wrap:anywhere; }
+    textarea { width:100%; min-height:90px; padding:11px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); resize:vertical; outline:0; }
+    textarea:focus { border-color:var(--gold); }
+    .gold-button { min-height:36px; padding:0 14px; margin-top:9px; border:1px solid var(--gold); border-radius:4px; background:var(--gold); color:#101011; font-size:10px; font-weight:600; cursor:pointer; }
+    .note { padding:12px 0; border-bottom:1px solid var(--soft); }
+    .note:last-child { border:0; }
+    .note p { margin:0 0 5px; color:#c9c6bf; font-size:11px; line-height:1.55; white-space:pre-wrap; }
+    .note time,.activity time { color:#55565c; font-size:9px; }
+    .activity { padding:9px 0 9px 15px; border-left:1px solid #313238; position:relative; color:var(--muted); font-size:10px; }
+    .activity::before { content:""; position:absolute; width:5px; height:5px; border-radius:50%; background:var(--gold); left:-3px; top:14px; }
+    .activity time { display:block; margin-top:3px; }
+    .toast { position:fixed; right:24px; bottom:24px; padding:12px 15px; border:1px solid #36373d; border-radius:5px; background:#17181b; color:var(--muted); font-size:11px; opacity:0; transform:translateY(8px); transition:.2s; z-index:60; }
+    .toast.show { opacity:1; transform:translateY(0); }
+    @media(max-width:1000px) {
+      :root { --sidebar-width:78px; }
+      .brand-name,.nav-label,.nav-item span,.user div { display:none; }
+      .brand,.nav-item,.user { justify-content:center; }
+      .toolbar { flex-wrap:wrap; }
+      .search { flex-basis:100%; }
+    }
+    @media(max-width:700px) {
+      .shell { display:block; }
+      .sidebar { display:none; }
+      main { grid-column:1; }
+      .topbar { padding:0 18px; }
+      .content { padding:28px 16px 50px; }
+      .heading { align-items:flex-start; }
+      .count-box { display:none; }
+      select { flex:1; min-width:130px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><div class="brand-mark"><span>L</span></div><div class="brand-name">LeadCleaner <small>Private Intelligence</small></div></a>
+      <nav>
+        <div class="nav-section">
+          <div class="nav-label">Workspace</div>
+          <a class="nav-item" href="/"><span class="nav-icon">▦</span><span>Overview</span></a>
+          <a class="nav-item" href="/"><span class="nav-icon">☼</span><span>Today</span></a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-label">Intelligence</div>
+          <a class="nav-item {{ 'active' if page_mode == 'leads' else '' }}" href="/leads"><span class="nav-icon">♙</span><span>Leads</span></a>
+          <a class="nav-item" href="/leads"><span class="nav-icon">⌂</span><span>Properties</span></a>
+          <a class="nav-item {{ 'active' if page_mode == 'research' else '' }}" href="/research"><span class="nav-icon">⌕</span><span>Research Queue</span></a>
+          <a class="nav-item" href="/leads?status=interested"><span class="nav-icon">☷</span><span>Pipeline</span></a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-label">Operations</div>
+          <a class="nav-item" href="/"><span class="nav-icon">↓</span><span>Imports</span></a>
+          <a class="nav-item" href="/leads"><span class="nav-icon">✦</span><span>Enrichment</span></a>
+        </div>
+      </nav>
+      <div class="sidebar-footer"><div class="user"><div class="avatar">DM</div><div><strong>Daryl Moore</strong><small>Tulsa acquisitions</small></div></div></div>
+    </aside>
+
+    <main>
+      <header class="topbar"><div class="crumb">Tulsa County <span>/</span> {{ 'Research Queue' if page_mode == 'research' else 'Leads' }}</div><div class="status">CRM database connected</div></header>
+      <div class="content">
+        <section class="heading">
+          <div><div class="eyebrow">{{ 'Evidence review' if page_mode == 'research' else 'Acquisition workspace' }}</div><h1>{{ 'Research Queue' if page_mode == 'research' else 'Leads' }}</h1><p>{{ 'Verify deceased-owner and mailing signals before outreach.' if page_mode == 'research' else 'Every actionable owner and property from your processed county lists.' }}</p></div>
+          <div class="count-box"><strong id="total-count">—</strong><span>Matching records</span></div>
+        </section>
+
+        <section class="toolbar">
+          <input class="search" id="search" placeholder="Search owner, property address or Tax ID…">
+          <select id="status-filter"><option value="">All statuses</option>{% for status in statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select>
+          <select id="priority-filter"><option value="">All priorities</option>{% for priority in priorities %}<option value="{{ priority }}">{{ priority.title() }}</option>{% endfor %}</select>
+          <button class="clear" id="clear-filters">Clear</button>
+        </section>
+
+        <section class="table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Owner</th><th>Property</th><th>Total due</th><th>Priority</th><th>Status</th><th>Evidence</th><th>Research</th><th>Next follow-up</th></tr></thead>
+              <tbody id="lead-rows"><tr><td colspan="8" class="empty">Loading CRM records…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination"><span id="page-summary"></span><div class="page-buttons"><button class="page-button" id="previous-page">Previous</button><button class="page-button" id="next-page">Next</button></div></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+  <aside class="drawer" id="drawer">
+    <header class="drawer-header"><div><h2 id="drawer-owner">Lead details</h2><p id="drawer-property"></p></div><button class="close" id="close-drawer">×</button></header>
+    <div class="drawer-body">
+      <section class="section">
+        <div class="section-title">Workflow</div>
+        <div class="field-grid">
+          <div class="field"><label>Status</label><select id="edit-status">{% for status in statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Priority</label><select id="edit-priority">{% for priority in priorities %}<option value="{{ priority }}">{{ priority.title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Research status</label><select id="edit-research">{% for status in research_statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Next follow-up</label><input type="date" id="edit-follow-up"></div>
+        </div>
+      </section>
+      <section class="section"><div class="section-title">Property & owner</div><div class="details" id="lead-details"></div></section>
+      <section class="section"><div class="section-title">Contact data</div><div class="field-grid"><div class="field"><label>Phone</label><input id="edit-phone" placeholder="Add phone number"></div><div class="field"><label>Email</label><input id="edit-email" type="email" placeholder="Add email address"></div></div><button class="gold-button" id="save-contact">Save contact</button></section>
+      <section class="section"><div class="section-title">Add note</div><textarea id="note-body" placeholder="Record call outcome, research evidence or next action…"></textarea><button class="gold-button" id="add-note">Add note</button><div id="notes-list"></div></section>
+      <section class="section"><div class="section-title">Activity history</div><div id="activity-list"></div></section>
+    </div>
+  </aside>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const pageMode = {{ page_mode|tojson }};
+    const state = { page:1, pages:1, selectedLead:null, timer:null };
+    const $ = id => document.getElementById(id);
+    const money = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
+    const number = new Intl.NumberFormat('en-US');
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const label = value => String(value || '').replaceAll('_',' ').replace(/\b\w/g, c => c.toUpperCase());
+    const dateLabel = value => value ? new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(new Date(value)) : '—';
+    function toast(message){ $('toast').textContent=message; $('toast').classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('toast').classList.remove('show'),2200); }
+
+    function params(){
+      const query = new URLSearchParams({page:state.page,per_page:50});
+      if($('search').value.trim()) query.set('q',$('search').value.trim());
+      if($('status-filter').value) query.set('status',$('status-filter').value);
+      if($('priority-filter').value) query.set('priority',$('priority-filter').value);
+      if(pageMode === 'research') query.set('research_only','true');
+      return query;
+    }
+    async function loadLeads(){
+      $('lead-rows').innerHTML='<tr><td colspan="8" class="empty">Loading CRM records…</td></tr>';
+      const response=await fetch(`/api/leads?${params()}`);
+      const data=await response.json();
+      state.pages=data.pages; $('total-count').textContent=number.format(data.total);
+      $('page-summary').textContent=`Page ${data.page} of ${data.pages} · ${number.format(data.total)} records`;
+      $('previous-page').disabled=data.page<=1; $('next-page').disabled=data.page>=data.pages;
+      if(!data.items.length){ $('lead-rows').innerHTML='<tr><td colspan="8" class="empty">No leads match these filters.</td></tr>'; return; }
+      $('lead-rows').innerHTML=data.items.map(lead=>`
+        <tr data-id="${lead.id}">
+          <td><span class="owner">${esc(lead.owner_name)}</span><span class="tax-id">${esc(lead.tax_id || 'No Tax ID')}</span></td>
+          <td>${esc(lead.property_address || 'Address unavailable')}<span class="tax-id">${esc(lead.property_city || '')}</span></td>
+          <td class="money">${money.format(lead.total_due || 0)}</td>
+          <td><span class="pill ${lead.priority}">${label(lead.priority)}</span></td>
+          <td><span class="pill">${label(lead.status)}</span></td>
+          <td>${lead.deceased_flag ? '<span class="signal">Deceased flag</span>' : lead.mailing_signal ? `<span class="signal">${esc(lead.mailing_signal)} mailing</span>` : '<span class="muted">No signal</span>'}</td>
+          <td>${label(lead.research_status)}</td>
+          <td>${dateLabel(lead.next_follow_up)}</td>
+        </tr>`).join('');
+      document.querySelectorAll('#lead-rows tr[data-id]').forEach(row=>row.addEventListener('click',()=>openLead(row.dataset.id)));
+    }
+    async function openLead(id){
+      const response=await fetch(`/api/leads/${id}`); const lead=await response.json();
+      state.selectedLead=lead;
+      $('drawer-owner').textContent=lead.owner_name; $('drawer-property').textContent=lead.property_address || 'Property address unavailable';
+      $('edit-status').value=lead.status; $('edit-priority').value=lead.priority; $('edit-research').value=lead.research_status;
+      $('edit-follow-up').value=(lead.next_follow_up || '').slice(0,10); $('edit-phone').value=lead.phone || ''; $('edit-email').value=lead.email || '';
+      $('lead-details').innerHTML=[
+        ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],
+        ['Mailing city',lead.mailing_city],['Mailing state',lead.mailing_state],['ZIP code',lead.zip_code],['Tax year',lead.tax_year],
+        ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None']
+      ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
+      renderNotes(lead.notes); renderActivity(lead.activity);
+      $('backdrop').classList.add('open'); $('drawer').classList.add('open');
+    }
+    function closeDrawer(){ $('backdrop').classList.remove('open'); $('drawer').classList.remove('open'); state.selectedLead=null; }
+    function renderNotes(notes){ $('notes-list').innerHTML=notes?.length?notes.map(note=>`<div class="note"><p>${esc(note.body)}</p><time>${dateLabel(note.created_at)}</time></div>`).join(''):'<div class="note muted">No notes yet.</div>'; }
+    function renderActivity(items){ $('activity-list').innerHTML=items?.length?items.map(item=>`<div class="activity">${esc(item.detail)}<time>${dateLabel(item.created_at)}</time></div>`).join(''):'<div class="muted">No activity recorded.</div>'; }
+    async function patchLead(changes){
+      if(!state.selectedLead) return;
+      const response=await fetch(`/api/leads/${state.selectedLead.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(changes)});
+      const data=await response.json(); if(!response.ok){ toast(data.error||'Update failed'); return; }
+      state.selectedLead=data.lead; renderActivity(data.lead.activity); toast('Lead updated'); loadLeads();
+    }
+    ['edit-status','edit-priority','edit-research','edit-follow-up'].forEach(id=>$(id).addEventListener('change',event=>{
+      const field={ 'edit-status':'status','edit-priority':'priority','edit-research':'research_status','edit-follow-up':'next_follow_up' }[id];
+      patchLead({[field]:event.target.value||null});
+    }));
+    $('save-contact').addEventListener('click',()=>patchLead({phone:$('edit-phone').value.trim(),email:$('edit-email').value.trim()}));
+    $('add-note').addEventListener('click',async()=>{
+      if(!state.selectedLead) return; const body=$('note-body').value.trim(); if(!body) return toast('Write a note first.');
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
+      const data=await response.json(); if(!response.ok) return toast(data.error||'Note failed');
+      $('note-body').value=''; await openLead(state.selectedLead.id); toast('Note added');
+    });
+    $('search').addEventListener('input',()=>{ clearTimeout(state.timer); state.timer=setTimeout(()=>{state.page=1;loadLeads();},250); });
+    ['status-filter','priority-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
+    $('clear-filters').addEventListener('click',()=>{$('search').value='';$('status-filter').value='';$('priority-filter').value='';state.page=1;loadLeads();});
+    $('previous-page').addEventListener('click',()=>{if(state.page>1){state.page--;loadLeads();}});
+    $('next-page').addEventListener('click',()=>{if(state.page<state.pages){state.page++;loadLeads();}});
+    $('close-drawer').addEventListener('click',closeDrawer); $('backdrop').addEventListener('click',closeDrawer);
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDrawer();});
+    const initial=new URLSearchParams(location.search); if(initial.get('status')) $('status-filter').value=initial.get('status');
+    loadLeads();
+  </script>
+</body>
+</html>

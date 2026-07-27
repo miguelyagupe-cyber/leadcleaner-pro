@@ -13,6 +13,7 @@ class DashboardApiTest(unittest.TestCase):
         app.config.update(
             TESTING=True,
             OUTPUT_FOLDER=self.temp_dir.name,
+            CRM_DATABASE=os.path.join(self.temp_dir.name, 'crm.db'),
         )
         self.client = app.test_client()
 

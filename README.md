@@ -47,6 +47,26 @@ Open browser → **http://localhost:5000**
 - ✅ Keeps TRUST / TRUSTEE names (family trusts are valid leads)
 - ✅ Sorts by Total Due (highest debt first = most motivated sellers)
 - ✅ Shows exactly how many leads were removed and why
+- ✅ Imports every clean record into the CRM database
+- ✅ Builds Leads and Research Queue workspaces
+- ✅ Saves pipeline status, priority, research decisions, contacts and notes
+
+## CRM database
+
+The CRM uses SQLite by default and creates its database at:
+
+```text
+data/leadcleaner.db
+```
+
+To use a different location, set:
+
+```bash
+export CRM_DATABASE=/persistent/path/leadcleaner.db
+```
+
+Production hosting must mount that location on persistent storage. A later
+PostgreSQL migration can replace SQLite without changing the browser API.
 
 ---
 
