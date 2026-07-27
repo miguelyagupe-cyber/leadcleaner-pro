@@ -12,7 +12,11 @@ class CRMTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.database_path = os.path.join(self.temp_dir.name, 'crm.db')
-        app.config.update(TESTING=True, CRM_DATABASE=self.database_path)
+        app.config.update(
+            TESTING=True,
+            DATABASE_URL=None,
+            CRM_DATABASE=self.database_path,
+        )
         self.repository = CRMRepository(self.database_path)
         self.repository.initialize()
         self.client = app.test_client()
@@ -118,6 +122,14 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(metrics['deceased_signals'], 1)
         self.assertEqual(metrics['research_queue'], 1)
         self.assertEqual(metrics['contacts_found'], 1)
+
+    def test_import_is_idempotent(self):
+        leads = self.repository.list_leads()
+        self.assertEqual(leads['total'], 2)
+
+    def test_health_reports_database_dialect(self):
+        health = self.client.get('/api/health').get_json()
+        self.assertEqual(health, {'status': 'ok', 'database': 'sqlite'})
 
 
 if __name__ == '__main__':

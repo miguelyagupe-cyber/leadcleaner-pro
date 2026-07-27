@@ -17,6 +17,7 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
+app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -27,7 +28,8 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
 
 def get_crm():
-    repository = CRMRepository(app.config['CRM_DATABASE'])
+    database_target = app.config.get('DATABASE_URL') or app.config['CRM_DATABASE']
+    repository = CRMRepository(database_target)
     repository.initialize()
     return repository
 
@@ -594,6 +596,11 @@ def api_leads():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pagination or filter value'}), 400
     return jsonify(result)
+
+
+@app.route('/api/health')
+def api_health():
+    return jsonify(get_crm().health())
 
 
 @app.route('/api/leads/<int:lead_id>')

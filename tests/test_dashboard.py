@@ -12,6 +12,7 @@ class DashboardApiTest(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         app.config.update(
             TESTING=True,
+            DATABASE_URL=None,
             OUTPUT_FOLDER=self.temp_dir.name,
             CRM_DATABASE=os.path.join(self.temp_dir.name, 'crm.db'),
         )
