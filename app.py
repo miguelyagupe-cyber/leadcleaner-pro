@@ -449,6 +449,95 @@ def index():
     return render_template('index.html')
 
 
+def get_dashboard_snapshot():
+    """Build the dashboard from completed processing jobs.
+
+    The current product has no database yet, so job metadata is the only
+    durable source of truth. Keeping this endpoint derived from real job data
+    avoids hard-coded dashboard metrics while giving the CRM rebuild a stable
+    API boundary.
+    """
+    jobs = []
+    for filename in os.listdir(app.config['OUTPUT_FOLDER']):
+        if not filename.endswith('_meta.json'):
+            continue
+
+        meta_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
+        try:
+            with open(meta_path, encoding='utf-8') as meta_file:
+                meta = json.load(meta_file)
+        except (OSError, ValueError):
+            continue
+
+        output_filename = meta.get('output_filename', '')
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], os.path.basename(output_filename))
+        completed_at = datetime.fromtimestamp(os.path.getmtime(meta_path))
+        stats = meta.get('stats', {})
+        jobs.append({
+            'id': meta.get('uid', filename.replace('_meta.json', '')),
+            'tax_year': meta.get('tax_year'),
+            'completed_at': completed_at.isoformat(),
+            'completed_label': completed_at.strftime('%b %d, %Y · %I:%M %p'),
+            'output_filename': output_filename,
+            'download_available': bool(output_filename and os.path.exists(output_path)),
+            'stats': stats,
+        })
+
+    jobs.sort(key=lambda job: job['completed_at'], reverse=True)
+    latest = jobs[0] if jobs else None
+    latest_stats = latest['stats'] if latest else {}
+
+    return {
+        'has_data': bool(latest),
+        'generated_at': datetime.now().isoformat(),
+        'metrics': {
+            'actionable_leads': int(latest_stats.get('final', 0)),
+            'deceased_signals': int(latest_stats.get('deceased_flagged', 0)),
+            'research_queue': int(
+                latest_stats.get('absentee_signal_strong', 0)
+                + latest_stats.get('absentee_signal_weak', 0)
+            ),
+            'contacts_found': int(latest_stats.get('with_phone', 0)),
+        },
+        'attention': [
+            {
+                'type': 'deceased',
+                'priority': 'High',
+                'title': 'Review deceased-owner evidence',
+                'detail': f"{int(latest_stats.get('deceased_flagged', 0))} records flagged by county-data patterns",
+                'count': int(latest_stats.get('deceased_flagged', 0)),
+            },
+            {
+                'type': 'research',
+                'priority': 'Medium',
+                'title': 'Investigate suspicious mailing records',
+                'detail': (
+                    f"{int(latest_stats.get('absentee_signal_strong', 0))} strong signals · "
+                    f"{int(latest_stats.get('absentee_signal_weak', 0))} weak signals"
+                ),
+                'count': int(
+                    latest_stats.get('absentee_signal_strong', 0)
+                    + latest_stats.get('absentee_signal_weak', 0)
+                ),
+            },
+            {
+                'type': 'contact',
+                'priority': 'Normal',
+                'title': 'Prepare leads for contact',
+                'detail': f"{int(latest_stats.get('without_phone', 0))} records still need contact data",
+                'count': int(latest_stats.get('without_phone', 0)),
+            },
+        ] if latest else [],
+        'latest_job': latest,
+        'recent_jobs': jobs[:5],
+    }
+
+
+@app.route('/api/dashboard')
+def dashboard_snapshot():
+    return jsonify(get_dashboard_snapshot())
+
+
 @app.route('/process', methods=['POST'])
 def process():
     if 'file' not in request.files:

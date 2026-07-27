@@ -1,573 +1,527 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>LeadCleaner Pro</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Private lead intelligence workspace for Tulsa County real estate acquisitions.">
+  <title>LeadCleaner Pro · Daryl's Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fraunces:ital,wght@1,300;1,400&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap" rel="stylesheet">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg:       #0e0e10;
-      --surface:  #16161a;
-      --surface2: #1c1c22;
-      --border:   #26262e;
-      --border2:  #32323c;
-      --gold:     #c9a84c;
-      --gold-dim: rgba(201,168,76,0.12);
-      --gold-glow:rgba(201,168,76,0.06);
-      --text:     #ededef;
-      --subtext:  #7a7a8a;
-      --muted:    #44444e;
-      --green:    #6fcf8a;
-      --red:      #f27070;
+      --bg: #0a0a0b;
+      --sidebar: #0d0d0f;
+      --surface: #111214;
+      --raised: #16171a;
+      --hover: #1b1c20;
+      --border: #25262b;
+      --border-soft: #1c1d21;
+      --gold: #c7a251;
+      --gold-bright: #d7b767;
+      --gold-soft: rgba(199, 162, 81, .11);
+      --text: #f1eee7;
+      --muted: #96979d;
+      --dim: #66676e;
+      --green: #65a879;
+      --amber: #d0964b;
+      --red: #d8665c;
+      --sidebar-width: 244px;
     }
 
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
     body {
+      margin: 0;
+      min-height: 100vh;
       background: var(--bg);
       color: var(--text);
-      font-family: 'Inter', system-ui, sans-serif;
+      font-family: "DM Sans", system-ui, sans-serif;
       font-size: 14px;
-      line-height: 1.6;
-      min-height: 100vh;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; text-decoration: none; }
+
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: var(--sidebar-width) 1fr; }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: var(--sidebar-width);
+      padding: 26px 18px 20px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--border-soft);
       display: flex;
       flex-direction: column;
+      z-index: 20;
+    }
+    .brand {
+      height: 48px;
+      padding: 0 10px;
+      display: flex;
       align-items: center;
-      padding: 64px 24px 96px;
+      gap: 11px;
+      margin-bottom: 24px;
     }
-
-    /* ── Header ── */
-    header {
-      text-align: center;
-      margin-bottom: 56px;
-      width: 100%;
-      max-width: 560px;
-    }
-
-    .wordmark {
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
+    .brand-mark {
+      width: 27px; height: 27px;
+      display: grid; place-items: center;
+      border: 1px solid var(--gold);
       color: var(--gold);
-      margin-bottom: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
+      font-family: "Newsreader", serif;
+      font-size: 17px;
+      transform: rotate(45deg);
     }
-    .wordmark::before, .wordmark::after {
-      content: '';
-      display: block;
-      width: 24px;
-      height: 1px;
-      background: var(--gold);
-      opacity: 0.5;
-    }
+    .brand-mark span { transform: rotate(-45deg); }
+    .brand-name { font-weight: 600; letter-spacing: -.01em; }
+    .brand-name small { display: block; margin-top: 1px; color: var(--dim); font-size: 9px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
 
-    h1 {
-      font-family: 'Inter', sans-serif;
-      font-size: clamp(28px, 5vw, 42px);
-      font-weight: 300;
-      letter-spacing: -0.02em;
-      line-height: 1.15;
-      color: var(--text);
-      margin-bottom: 14px;
-    }
-    h1 em {
-      font-family: 'Fraunces', Georgia, serif;
-      font-style: italic;
-      font-weight: 300;
-      color: var(--gold);
-    }
-
-    .tagline {
-      font-size: 13px;
-      color: var(--subtext);
-      letter-spacing: 0.02em;
-    }
-
-    /* ── Steps ── */
-    .steps-bar {
-      display: flex;
-      align-items: center;
+    .nav-section { margin-bottom: 23px; }
+    .nav-label { padding: 0 11px; margin-bottom: 7px; color: #55565c; font-size: 9px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
+    .nav-item {
       width: 100%;
-      max-width: 560px;
-      margin-bottom: 28px;
-    }
-    .step-item { display: flex; align-items: center; gap: 8px; flex: 1; }
-    .step-num {
-      width: 24px; height: 24px; border-radius: 50%;
-      border: 1px solid var(--border2);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 10px; font-weight: 500; color: var(--muted);
-      flex-shrink: 0; transition: all 0.3s;
-    }
-    .step-label {
-      font-size: 10px; font-weight: 500; color: var(--muted);
-      letter-spacing: 0.1em; text-transform: uppercase; transition: color 0.3s;
-    }
-    .step-connector { flex: 1; height: 1px; background: var(--border); max-width: 48px; }
-    .step-item.active .step-num  { border-color: var(--gold); background: var(--gold); color: var(--bg); }
-    .step-item.active .step-label { color: var(--gold); }
-    .step-item.done .step-num    { border-color: var(--gold); color: var(--gold); background: transparent; }
-    .step-item.done .step-label  { color: var(--subtext); }
-
-    /* ── Card ── */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 36px;
-      width: 100%;
-      max-width: 560px;
-      margin-bottom: 16px;
-    }
-
-    .card-label {
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--subtext);
-      margin-bottom: 28px;
+      min-height: 38px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #85868c;
       display: flex;
       align-items: center;
-      gap: 10px;
-    }
-    .card-label::after {
-      content: ''; flex: 1; height: 1px; background: var(--border);
-    }
-
-    /* ── Upload zone ── */
-    .upload-zone {
-      border: 1px dashed var(--border2);
-      border-radius: 6px;
-      padding: 44px 24px;
-      text-align: center;
+      gap: 11px;
       cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
+      text-align: left;
+      transition: .16s ease;
+    }
+    .nav-item:hover { background: var(--raised); color: var(--text); }
+    .nav-item.active { background: var(--gold-soft); color: var(--gold-bright); }
+    .nav-icon { width: 16px; height: 16px; opacity: .85; }
+    .nav-count { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 10px; background: #1e1f23; color: var(--dim); font-size: 10px; text-align: center; }
+    .nav-item.active .nav-count { background: rgba(199,162,81,.16); color: var(--gold); }
+    .sidebar-footer { margin-top: auto; border-top: 1px solid var(--border-soft); padding-top: 16px; }
+    .workspace-user { display: flex; align-items: center; gap: 10px; padding: 7px 9px; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; background: #222329; border: 1px solid #34353a; display: grid; place-items: center; color: var(--gold); font-size: 11px; font-weight: 600; }
+    .workspace-user strong { display: block; font-size: 12px; font-weight: 500; }
+    .workspace-user small { color: var(--dim); font-size: 10px; }
+
+    main { grid-column: 2; min-width: 0; }
+    .topbar {
+      height: 66px;
+      padding: 0 38px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      background: rgba(10,10,11,.94);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+    .workspace-label { color: var(--muted); font-size: 12px; }
+    .workspace-label span { color: #4f5056; margin: 0 8px; }
+    .status-set { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 11px; }
+    .status-live { display: flex; align-items: center; gap: 7px; }
+    .status-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+    .top-icon { border: 0; background: transparent; color: var(--muted); padding: 6px; cursor: pointer; }
+
+    .content { max-width: 1440px; margin: 0 auto; padding: 49px 48px 80px; }
+    .welcome { display: flex; justify-content: space-between; align-items: flex-end; gap: 30px; margin-bottom: 29px; }
+    .eyebrow { color: var(--gold); font-size: 9px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; margin-bottom: 10px; }
+    h1 { margin: 0; font-family: "Newsreader", Georgia, serif; font-size: clamp(35px, 4vw, 50px); font-weight: 400; line-height: 1.06; letter-spacing: -.025em; }
+    .welcome-copy { margin: 9px 0 0; color: var(--muted); font-size: 14px; }
+    .date-block { padding-bottom: 4px; text-align: right; }
+    .date-block strong { display: block; font-family: "Newsreader", serif; font-size: 19px; font-weight: 400; }
+    .date-block span { color: var(--dim); font-size: 11px; }
+
+    .command-box {
+      min-height: 66px;
+      padding: 10px 11px 10px 20px;
+      border: 1px solid #33343a;
+      border-radius: 7px;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      box-shadow: 0 14px 36px rgba(0,0,0,.18);
+    }
+    .command-box svg { color: var(--gold); flex: 0 0 auto; }
+    .command-box input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 15px; }
+    .command-box input::placeholder { color: #6f7077; }
+    .command-submit { height: 42px; padding: 0 17px; border: 1px solid #3a3b40; border-radius: 5px; background: #1b1c1f; color: var(--muted); cursor: pointer; transition: .16s ease; }
+    .command-submit:hover { border-color: var(--gold); color: var(--gold); }
+    .command-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 35px; }
+    .suggestion { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--dim); font-size: 10px; cursor: pointer; }
+    .suggestion:hover { border-color: #45464d; color: var(--muted); }
+
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-bottom: 27px; }
+    .metric {
+      min-height: 118px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
       position: relative;
+      overflow: hidden;
     }
-    .upload-zone:hover, .upload-zone.drag-over {
-      border-color: var(--gold);
-      background: var(--gold-glow);
-    }
-    .upload-zone input[type="file"] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-    }
-    .upload-icon { font-size: 22px; margin-bottom: 10px; opacity: 0.7; }
-    .upload-zone p { color: var(--subtext); font-size: 13px; line-height: 1.6; }
-    .upload-zone p span { color: var(--text); font-weight: 500; }
-    .file-name { color: var(--gold); font-weight: 500; margin-top: 8px; font-size: 12px; }
+    .metric::before { content:""; position:absolute; inset:0 auto 0 0; width:2px; background: transparent; }
+    .metric.primary::before { background: var(--gold); }
+    .metric-label { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+    .metric-value { margin-top: 14px; font-family: "Newsreader", serif; font-size: 32px; line-height: 1; letter-spacing: -.02em; }
+    .metric.primary .metric-value { color: var(--gold-bright); }
+    .metric-note { margin-top: 7px; color: var(--dim); font-size: 10px; }
 
-    /* ── Field ── */
-    .field { margin-top: 20px; }
-    .field label {
-      display: block; font-size: 10px; font-weight: 600;
-      letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--subtext); margin-bottom: 8px;
-    }
-    .field input {
-      width: 100%; background: var(--bg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 11px 14px; color: var(--text);
-      font-family: 'Inter', sans-serif; font-size: 14px;
-      outline: none; transition: border-color 0.2s;
-    }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(300px,.78fr); gap: 14px; }
+    .panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); min-width: 0; }
+    .panel-header { min-height: 61px; padding: 0 20px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .panel-title { font-size: 12px; font-weight: 500; }
+    .panel-subtitle { margin-top: 2px; color: var(--dim); font-size: 10px; }
+    .panel-link { border: 0; background: transparent; color: var(--gold); font-size: 10px; cursor: pointer; }
+    .attention-list { min-height: 271px; }
+    .attention-row { min-height: 82px; padding: 15px 20px; border-bottom: 1px solid var(--border-soft); display: grid; grid-template-columns: 34px minmax(0,1fr) auto; align-items: center; gap: 13px; cursor: pointer; }
+    .attention-row:last-child { border-bottom: 0; }
+    .attention-row:hover { background: #141518; }
+    .signal-icon { width: 32px; height: 32px; border-radius: 5px; display: grid; place-items: center; background: #1c1d21; color: var(--muted); }
+    .signal-icon.high { background: rgba(216,102,92,.1); color: var(--red); }
+    .signal-icon.medium { background: rgba(208,150,75,.1); color: var(--amber); }
+    .attention-copy strong { display: block; margin-bottom: 3px; font-size: 12px; font-weight: 500; }
+    .attention-copy span { color: var(--dim); font-size: 10px; }
+    .attention-count { min-width: 34px; height: 25px; padding: 0 8px; border: 1px solid var(--border); border-radius: 13px; display: grid; place-items: center; color: var(--muted); font-size: 10px; }
+    .empty-state { min-height: 271px; padding: 42px 24px; display: grid; place-items: center; text-align: center; }
+    .empty-state strong { display: block; font-family: "Newsreader", serif; font-size: 20px; font-weight: 400; }
+    .empty-state p { max-width: 330px; margin: 7px auto 17px; color: var(--dim); font-size: 11px; }
+
+    .quick-actions { padding: 13px; display: grid; gap: 8px; }
+    .quick-action { width: 100%; min-height: 52px; padding: 0 14px; border: 1px solid var(--border-soft); border-radius: 5px; background: var(--raised); display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer; transition: .16s ease; }
+    .quick-action:hover { border-color: #414249; background: var(--hover); }
+    .quick-action-icon { width: 28px; height: 28px; border: 1px solid #303137; border-radius: 4px; display: grid; place-items: center; color: var(--gold); }
+    .quick-action strong { display: block; font-size: 11px; font-weight: 500; }
+    .quick-action span { color: var(--dim); font-size: 9px; }
+    .quick-action svg:last-child { margin-left: auto; color: #484950; }
+
+    .recent-panel { margin-top: 14px; grid-column: 1 / -1; }
+    .recent-table { width: 100%; border-collapse: collapse; }
+    .recent-table th { height: 38px; padding: 0 20px; border-bottom: 1px solid var(--border-soft); color: #5f6067; font-size: 9px; font-weight: 600; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
+    .recent-table td { height: 55px; padding: 0 20px; border-bottom: 1px solid var(--border-soft); color: var(--muted); font-size: 11px; }
+    .recent-table tr:last-child td { border-bottom: 0; }
+    .job-name { color: var(--text); font-weight: 500; }
+    .download-link { color: var(--gold); }
+    .table-empty { padding: 30px 20px !important; color: var(--dim) !important; text-align: center; }
+
+    .primary-button { min-height: 38px; padding: 0 15px; border: 1px solid var(--gold); border-radius: 4px; background: var(--gold); color: #101011; font-size: 10px; font-weight: 600; letter-spacing: .04em; cursor: pointer; }
+    .primary-button:hover { background: var(--gold-bright); }
+    .secondary-button { min-height: 38px; padding: 0 15px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+
+    .modal-backdrop { position: fixed; inset: 0; padding: 24px; background: rgba(3,3,4,.78); backdrop-filter: blur(7px); display: none; place-items: center; z-index: 100; }
+    .modal-backdrop.open { display: grid; }
+    .modal { width: min(560px,100%); border: 1px solid #34353b; border-radius: 7px; background: #111214; box-shadow: 0 28px 80px rgba(0,0,0,.55); }
+    .modal-header { padding: 23px 25px 19px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: flex-start; }
+    .modal-header h2 { margin: 0; font-family: "Newsreader", serif; font-size: 25px; font-weight: 400; }
+    .modal-header p { margin: 5px 0 0; color: var(--dim); font-size: 10px; }
+    .close-button { border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 19px; }
+    .modal-body { padding: 24px 25px 26px; }
+    .upload-zone { min-height: 154px; border: 1px dashed #3b3c42; border-radius: 5px; display: grid; place-items: center; position: relative; text-align: center; cursor: pointer; }
+    .upload-zone:hover, .upload-zone.drag-over { border-color: var(--gold); background: var(--gold-soft); }
+    .upload-zone input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .upload-zone strong { display: block; margin-top: 8px; font-size: 12px; font-weight: 500; }
+    .upload-zone span { color: var(--dim); font-size: 10px; }
+    .selected-file { margin-top: 6px; color: var(--gold) !important; }
+    .field { margin-top: 17px; }
+    .field label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+    .field input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--border); border-radius: 4px; outline: 0; background: var(--bg); color: var(--text); }
     .field input:focus { border-color: var(--gold); }
+    .modal-actions { margin-top: 22px; display: flex; justify-content: flex-end; gap: 8px; }
+    .progress { display: none; margin-top: 19px; }
+    .progress-track { height: 3px; border-radius: 3px; background: #24252a; overflow: hidden; }
+    .progress-fill { width: 0; height: 100%; background: var(--gold); transition: width .35s ease; }
+    .progress-label { margin-top: 8px; color: var(--dim); font-size: 10px; text-align: center; }
+    .error { display: none; margin-top: 14px; padding: 10px 12px; border: 1px solid rgba(216,102,92,.28); border-radius: 4px; background: rgba(216,102,92,.08); color: #e6837a; font-size: 10px; }
+    .result { display: none; padding: 18px; margin-top: 18px; border: 1px solid rgba(101,168,121,.25); border-radius: 5px; background: rgba(101,168,121,.06); }
+    .result strong { display: block; margin-bottom: 5px; color: #8bc79a; font-weight: 500; }
+    .result p { margin: 0 0 13px; color: var(--muted); font-size: 10px; }
 
-    /* ── Buttons ── */
-    .btn-primary {
-      display: block; width: 100%; margin-top: 24px;
-      padding: 13px; background: var(--gold); color: var(--bg);
-      font-family: 'Inter', sans-serif; font-weight: 600;
-      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
-      border: none; border-radius: 6px; cursor: pointer;
-      transition: opacity 0.2s, transform 0.15s;
-    }
-    .btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
-    .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+    .toast { position: fixed; right: 25px; bottom: 25px; max-width: 360px; padding: 13px 16px; border: 1px solid #36373d; border-radius: 5px; background: #17181b; color: var(--muted); font-size: 11px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; z-index: 120; }
+    .toast.show { opacity: 1; transform: translateY(0); }
 
-    .btn-download {
-      display: block; width: 100%; padding: 13px;
-      background: transparent; color: var(--gold);
-      font-family: 'Inter', sans-serif; font-weight: 600;
-      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
-      border: 1px solid var(--gold); border-radius: 6px; cursor: pointer;
-      text-align: center; text-decoration: none;
-      transition: background 0.2s, color 0.2s; margin-bottom: 12px;
+    @media (max-width: 1050px) {
+      :root { --sidebar-width: 78px; }
+      .brand-name, .nav-label, .nav-item span:not(.nav-count), .workspace-user div { display:none; }
+      .brand, .nav-item, .workspace-user { justify-content:center; }
+      .nav-count { display:none; }
+      .metric-grid { grid-template-columns: repeat(2,1fr); }
     }
-    .btn-download:hover { background: var(--gold); color: var(--bg); }
-
-    .btn-phone {
-      display: block; width: 100%; padding: 13px;
-      background: transparent; color: var(--text);
-      font-family: 'Inter', sans-serif; font-weight: 500;
-      font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;
-      border: 1px solid var(--border2); border-radius: 6px; cursor: pointer;
-      text-align: center; transition: border-color 0.2s, color 0.2s;
+    @media (max-width: 760px) {
+      .app-shell { display:block; }
+      .sidebar { display:none; }
+      main { grid-column: 1; }
+      .topbar { padding: 0 20px; }
+      .content { padding: 34px 20px 60px; }
+      .welcome { align-items:flex-start; }
+      .date-block { display:none; }
+      .metric-grid, .dashboard-grid { grid-template-columns: 1fr; }
+      .recent-panel { grid-column: 1; overflow-x:auto; }
+      .command-submit { display:none; }
     }
-    .btn-phone:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
-    .btn-phone:disabled { opacity: 0.3; cursor: not-allowed; }
-
-    .btn-reset {
-      display: block; width: 100%; padding: 11px; margin-top: 10px;
-      background: transparent; color: var(--muted);
-      font-family: 'Inter', sans-serif; font-size: 12px;
-      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
-      transition: color 0.2s, border-color 0.2s;
-    }
-    .btn-reset:hover { color: var(--text); border-color: var(--border2); }
-
-    /* ── Progress ── */
-    .progress-wrap { margin: 20px 0; }
-    .progress-track {
-      background: var(--surface2); border-radius: 100px;
-      height: 3px; overflow: hidden;
-    }
-    .progress-fill {
-      height: 100%; background: var(--gold); border-radius: 100px;
-      width: 0%; transition: width 0.5s ease;
-    }
-    .progress-text {
-      font-size: 12px; color: var(--subtext);
-      text-align: center; margin-top: 10px;
-    }
-
-    /* ── Stats ── */
-    .stat-grid {
-      display: grid; grid-template-columns: 1fr 1fr;
-      gap: 10px; margin-bottom: 24px;
-    }
-    .stat-box {
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 18px 16px;
-    }
-    .stat-box.highlight { border-color: var(--gold); background: var(--gold-dim); }
-    .stat-value {
-      font-size: 26px; font-weight: 300; color: var(--text);
-      letter-spacing: -0.02em; line-height: 1;
-      margin-bottom: 5px;
-    }
-    .stat-box.highlight .stat-value { color: var(--gold); }
-    .stat-label {
-      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--subtext);
-    }
-
-    /* ── Divider ── */
-    .divider {
-      display: flex; align-items: center; gap: 12px;
-      font-size: 10px; font-weight: 500; letter-spacing: 0.14em;
-      text-transform: uppercase; color: var(--muted); margin: 12px 0 20px;
-    }
-    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-    /* ── Skip trace box ── */
-    .skiptrace-box {
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 24px; background: var(--surface2);
-    }
-    .skiptrace-box h3 {
-      font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--text); margin-bottom: 8px;
-    }
-    .skiptrace-box p {
-      font-size: 13px; color: var(--subtext); line-height: 1.7; margin-bottom: 18px;
-    }
-    .skiptrace-box p strong { color: var(--text); font-weight: 500; }
-
-    .pill {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
-      text-transform: uppercase; padding: 3px 10px;
-      border-radius: 100px; margin-bottom: 14px;
-    }
-    .pill-warn { background: var(--gold-dim); color: var(--gold); border: 1px solid rgba(201,168,76,0.25); }
-    .pill-ready { background: rgba(111,207,138,0.1); color: var(--green); border: 1px solid rgba(111,207,138,0.25); }
-    .pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-
-    .skiptrace-results {
-      display: none; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);
-    }
-    .skiptrace-results h4 {
-      font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--subtext); margin-bottom: 14px;
-    }
-
-    /* ── Error ── */
-    .error-box {
-      background: rgba(242,112,112,0.08); border: 1px solid rgba(242,112,112,0.25);
-      border-radius: 6px; padding: 12px 16px; color: var(--red);
-      font-size: 12px; margin-top: 14px; display: none;
-    }
-
-    /* ── Footer ── */
-    footer {
-      margin-top: 64px; font-size: 11px; color: var(--muted);
-      letter-spacing: 0.06em; text-align: center;
-    }
-    footer span { color: var(--gold); opacity: 0.7; }
   </style>
 </head>
 <body>
-
-  <header>
-    <div class="wordmark">LeadCleaner Pro</div>
-    <h1>Clean leads.<br><em>Close deals.</em></h1>
-    <p class="tagline">Tulsa County Delinquent Tax — Lead Processing Tool</p>
-  </header>
-
-  <!-- Steps -->
-  <div class="steps-bar">
-    <div class="step-item active" id="step-indicator-1">
-      <div class="step-num">1</div>
-      <div class="step-label">Clean List</div>
-    </div>
-    <div class="step-connector"></div>
-    <div class="step-item" id="step-indicator-2">
-      <div class="step-num">2</div>
-      <div class="step-label">Add Phone Numbers</div>
-    </div>
-  </div>
-
-  <!-- Upload card -->
-  <div class="card" id="upload-card">
-    <div class="card-label">Upload your list</div>
-
-    <div class="upload-zone" id="drop-zone">
-      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" />
-      <div class="upload-icon">📂</div>
-      <p><span>Drop your file here</span><br>or click to browse — .xlsx, .xls, .csv</p>
-      <div class="file-name" id="file-label"></div>
-    </div>
-
-    <div class="field">
-      <label>Tax Year to Target</label>
-      <input type="number" id="tax-year" value="2023" min="2000" max="2099" />
-    </div>
-
-    <button class="btn-primary" id="process-btn" disabled>Process My List</button>
-    <div class="error-box" id="error-box"></div>
-  </div>
-
-  <!-- Progress card -->
-  <div class="card" id="progress-card" style="display:none;">
-    <div class="card-label">Processing</div>
-    <div class="progress-wrap">
-      <div class="progress-track"><div class="progress-fill" id="progress-bar"></div></div>
-      <p class="progress-text" id="progress-label">Uploading file...</p>
-    </div>
-  </div>
-
-  <!-- Results card -->
-  <div class="card" id="results-card" style="display:none;">
-    <div class="card-label">Results</div>
-
-    <div class="stat-grid">
-      <div class="stat-box">
-        <div class="stat-value" id="stat-original">—</div>
-        <div class="stat-label">Original Rows</div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><span>L</span></div>
+        <div class="brand-name">LeadCleaner <small>Private Intelligence</small></div>
       </div>
-      <div class="stat-box">
-        <div class="stat-value" id="stat-year">—</div>
-        <div class="stat-label">Wrong Year</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="stat-biz">—</div>
-        <div class="stat-label">Businesses Removed</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="stat-cannabis">—</div>
-        <div class="stat-label">Cannabis Removed</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="stat-deceased">—</div>
-        <div class="stat-label">Deceased Flagged</div>
-      </div>
-      <div class="stat-box highlight">
-        <div class="stat-value" id="stat-final">—</div>
-        <div class="stat-label">Clean Leads Ready</div>
-      </div>
-    </div>
 
-    <a class="btn-download" id="download-btn" href="#" download>↓ Download Clean List</a>
-
-    <div class="divider">optional — step 2</div>
-
-    <div class="skiptrace-box">
-      <span class="pill pill-warn" id="skip-badge">API not configured</span>
-      <h3>Add Phone Numbers</h3>
-      <p>Run skip tracing on your <strong id="skip-count">—</strong> clean leads to append up to 8 phone numbers per owner. Only leads without existing numbers are sent.</p>
-
-      <div id="skiptrace-progress" style="display:none; margin-bottom:16px;">
-        <div class="progress-wrap">
-          <div class="progress-track">
-            <div class="progress-fill" style="width:80%;"></div>
-          </div>
-          <p class="progress-text">Running skip tracing — this may take a few minutes...</p>
+      <nav>
+        <div class="nav-section">
+          <div class="nav-label">Workspace</div>
+          <button class="nav-item active"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span>Overview</span></button>
+          <button class="nav-item" data-coming="Today view"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v4m0 12v4M4.9 4.9l2.8 2.8m8.6 8.6 2.8 2.8M2 12h4m12 0h4M4.9 19.1l2.8-2.8m8.6-8.6 2.8-2.8"/></svg><span>Today</span><span class="nav-count" id="today-count">0</span></button>
         </div>
-      </div>
-
-      <button class="btn-phone" id="btn-skiptrace" disabled onclick="runSkipTrace()">
-        📞 &nbsp;Add Phone Numbers
-      </button>
-      <div class="error-box" id="error-skiptrace"></div>
-
-      <div class="skiptrace-results" id="skiptrace-results">
-        <h4>Skip Tracing Complete</h4>
-        <div class="stat-grid" style="margin-bottom:16px;">
-          <div class="stat-box">
-            <div class="stat-value" id="stat-matched">—</div>
-            <div class="stat-label">Numbers Found</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-value" id="stat-sent">—</div>
-            <div class="stat-label">Records Sent</div>
-          </div>
+        <div class="nav-section">
+          <div class="nav-label">Intelligence</div>
+          <button class="nav-item" data-coming="Lead workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6m-3-3h6"/></svg><span>Leads</span><span class="nav-count" id="lead-count">0</span></button>
+          <button class="nav-item" data-coming="Property workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg><span>Properties</span></button>
+          <button class="nav-item" data-coming="Deceased and probate workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Deceased &amp; Probate</span><span class="nav-count" id="deceased-count">0</span></button>
+          <button class="nav-item" data-coming="Research queue"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><span>Research Queue</span><span class="nav-count" id="research-count">0</span></button>
+          <button class="nav-item" data-coming="Pipeline workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v4H4zM4 10h10v4H4zM4 16h6v4H4z"/></svg><span>Pipeline</span></button>
         </div>
-        <a class="btn-download" id="download-enriched" href="#" download>
-          ↓ Download List with Phone Numbers
-        </a>
-      </div>
-    </div>
+        <div class="nav-section">
+          <div class="nav-label">Operations</div>
+          <button class="nav-item" data-action="import"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v3h16v-3"/></svg><span>Imports</span></button>
+          <button class="nav-item" data-coming="Enrichment workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3 1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z"/></svg><span>Enrichment</span></button>
+          <button class="nav-item" data-coming="Reports workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span>Reports</span></button>
+        </div>
+      </nav>
 
-    <button class="btn-reset" id="reset-btn">Process another list</button>
+      <div class="sidebar-footer">
+        <div class="workspace-user"><div class="avatar">DM</div><div><strong>Daryl Moore</strong><small>Tulsa acquisitions</small></div></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div class="workspace-label">Tulsa County <span>/</span> Acquisition Intelligence</div>
+        <div class="status-set"><div class="status-live">System operational</div><button class="top-icon" aria-label="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></button></div>
+      </header>
+
+      <div class="content">
+        <section class="welcome">
+          <div><div class="eyebrow" id="briefing-label">Daily briefing</div><h1>Good morning, Daryl.</h1><p class="welcome-copy" id="welcome-copy">Here’s what needs your attention today.</p></div>
+          <div class="date-block"><strong id="current-date"></strong><span id="latest-sync">Waiting for your first import</span></div>
+        </section>
+
+        <form class="command-box" id="command-form">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="command-input" autocomplete="off" placeholder="What would you like to do today?">
+          <button class="command-submit" type="submit">Run command&nbsp; ↵</button>
+        </form>
+        <div class="command-suggestions">
+          <button class="suggestion" data-command="Show deceased owners">Review deceased owners</button>
+          <button class="suggestion" data-command="Import a new Tulsa County list">Import Tulsa list</button>
+          <button class="suggestion" data-command="Show records that need research">Continue research</button>
+          <button class="suggestion" data-command="Show leads without phone numbers">Find missing contacts</button>
+        </div>
+
+        <section class="metric-grid" aria-label="Workspace metrics">
+          <article class="metric primary"><div class="metric-label">Actionable leads <span>↗</span></div><div class="metric-value" id="metric-leads">—</div><div class="metric-note">Latest completed list</div></article>
+          <article class="metric"><div class="metric-label">Deceased signals <span>◎</span></div><div class="metric-value" id="metric-deceased">—</div><div class="metric-note">Evidence review required</div></article>
+          <article class="metric"><div class="metric-label">Research queue <span>⌁</span></div><div class="metric-value" id="metric-research">—</div><div class="metric-note">Suspicious mailing patterns</div></article>
+          <article class="metric"><div class="metric-label">Contacts found <span>◌</span></div><div class="metric-value" id="metric-contacts">—</div><div class="metric-note">Ready for outbound</div></article>
+        </section>
+
+        <section class="dashboard-grid">
+          <article class="panel">
+            <div class="panel-header"><div><div class="panel-title">Today’s attention queue</div><div class="panel-subtitle">Prioritized from your latest Tulsa County processing run</div></div><button class="panel-link" data-coming="Full attention queue">View all</button></div>
+            <div class="attention-list" id="attention-list"><div class="empty-state"><div><strong>Your workspace is ready.</strong><p>Import a Tulsa County list to create the first actionable lead queue.</p><button class="primary-button" data-action="import">Import first list</button></div></div></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header"><div><div class="panel-title">Quick actions</div><div class="panel-subtitle">Move directly into today’s work</div></div></div>
+            <div class="quick-actions">
+              <button class="quick-action" data-action="import"><span class="quick-action-icon">↓</span><span><strong>Import Tulsa list</strong><span>Clean and prioritize county data</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
+              <button class="quick-action" data-coming="Deceased-owner review"><span class="quick-action-icon">✓</span><span><strong>Review deceased signals</strong><span>Inspect evidence before outreach</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
+              <button class="quick-action" data-coming="Research queue"><span class="quick-action-icon">⌕</span><span><strong>Continue research</strong><span>Resolve identity and probate signals</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
+              <button class="quick-action" data-coming="Call logging"><span class="quick-action-icon">◌</span><span><strong>Log a call</strong><span>Record outcome and next action</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+          </article>
+
+          <article class="panel recent-panel">
+            <div class="panel-header"><div><div class="panel-title">Recent list processing</div><div class="panel-subtitle">Every metric links back to its source file</div></div><button class="panel-link" data-action="import">New import</button></div>
+            <table class="recent-table"><thead><tr><th>Run</th><th>Tax year</th><th>Clean leads</th><th>Deceased</th><th>Research</th><th>Completed</th><th>Output</th></tr></thead><tbody id="recent-jobs"><tr><td colspan="7" class="table-empty">No completed processing runs yet.</td></tr></tbody></table>
+          </article>
+        </section>
+      </div>
+    </main>
   </div>
 
-  <footer>LeadCleaner Pro &nbsp;·&nbsp; <span>Built for Daryl Moore Real Estate</span></footer>
+  <div class="modal-backdrop" id="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
+    <div class="modal">
+      <div class="modal-header"><div><h2 id="import-title">Import Tulsa County list</h2><p>Clean, classify and prepare the file for acquisition research.</p></div><button class="close-button" id="close-modal" aria-label="Close">×</button></div>
+      <div class="modal-body">
+        <div class="upload-zone" id="drop-zone"><input type="file" id="file-input" accept=".xlsx,.xls,.csv"><div><svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#c7a251"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 16v4h16v-4"/></svg><strong>Drop the county file here</strong><span>or click to browse · XLSX, XLS or CSV</span><div class="selected-file" id="file-label"></div></div></div>
+        <div class="field"><label for="tax-year">Target tax year</label><input type="number" id="tax-year" value="2023" min="2000" max="2099"></div>
+        <div class="progress" id="progress"><div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div><div class="progress-label" id="progress-label">Preparing import…</div></div>
+        <div class="error" id="error-box"></div>
+        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download clean workbook</a></div>
+        <div class="modal-actions" id="modal-actions"><button class="secondary-button" id="cancel-import">Cancel</button><button class="primary-button" id="process-button" disabled>Process list</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
 
   <script>
-    const fileInput  = document.getElementById('file-input');
-    const fileLabel  = document.getElementById('file-label');
-    const processBtn = document.getElementById('process-btn');
-    const dropZone   = document.getElementById('drop-zone');
-    let currentJobId = null;
+    const $ = id => document.getElementById(id);
+    const modal = $('import-modal');
+    const fileInput = $('file-input');
+    const dropZone = $('drop-zone');
+    const processButton = $('process-button');
+    const nf = new Intl.NumberFormat('en-US');
 
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    function showToast(message) {
+      const toast = $('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove('show'), 2800);
+    }
+
+    function openImport() { modal.classList.add('open'); }
+    function closeImport() {
+      if ($('progress').style.display === 'block') return;
+      modal.classList.remove('open');
+    }
+    document.querySelectorAll('[data-action="import"]').forEach(button => button.addEventListener('click', openImport));
+    document.querySelectorAll('[data-coming]').forEach(button => button.addEventListener('click', () => showToast(`${button.dataset.coming} is part of the next CRM build.`)));
+    $('close-modal').addEventListener('click', closeImport);
+    $('cancel-import').addEventListener('click', closeImport);
+    modal.addEventListener('click', event => { if (event.target === modal) closeImport(); });
+
+    const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
+    const currentDate = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+    $('briefing-label').textContent = `${weekday} briefing`;
+    $('current-date').textContent = currentDate;
+
+    function selectFile() {
+      const file = fileInput.files[0];
+      $('file-label').textContent = file ? `Selected · ${file.name}` : '';
+      processButton.disabled = !file;
+      $('error-box').style.display = 'none';
+    }
+    fileInput.addEventListener('change', selectFile);
+    dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-    dropZone.addEventListener('drop', e => {
-      e.preventDefault(); dropZone.classList.remove('drag-over');
-      if (e.dataTransfer.files.length) { fileInput.files = e.dataTransfer.files; onFileSelected(); }
+    dropZone.addEventListener('drop', event => {
+      event.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (event.dataTransfer.files.length) {
+        const transfer = new DataTransfer();
+        transfer.items.add(event.dataTransfer.files[0]);
+        fileInput.files = transfer.files;
+        selectFile();
+      }
     });
-    fileInput.addEventListener('change', onFileSelected);
 
-    function onFileSelected() {
-      const f = fileInput.files[0];
-      if (f) { fileLabel.textContent = '✓ ' + f.name; processBtn.disabled = false; hide('error-box'); }
+    function setProgress(percent, label) {
+      $('progress-fill').style.width = `${percent}%`;
+      $('progress-label').textContent = label;
     }
 
-    function setProgress(pct, label) {
-      document.getElementById('progress-bar').style.width = pct + '%';
-      document.getElementById('progress-label').textContent = label;
-    }
-
-    function show(id) { document.getElementById(id).style.display = 'block'; }
-    function hide(id) { document.getElementById(id).style.display = 'none'; }
-    function showError(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display = 'block'; }
-
-    function setStepDone(n) {
-      const el = document.getElementById(`step-indicator-${n}`);
-      el.className = 'step-item done';
-      el.querySelector('.step-num').textContent = '✓';
-    }
-    function setStepActive(n) {
-      document.getElementById(`step-indicator-${n}`).className = 'step-item active';
-    }
-
-    processBtn.addEventListener('click', async () => {
+    async function processList() {
       const file = fileInput.files[0];
       if (!file) return;
-
-      hide('error-box');
-      hide('upload-card');
-      show('progress-card');
-      setProgress(10, 'Uploading file...');
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('tax_year', document.getElementById('tax-year').value);
-
+      const data = new FormData();
+      data.append('file', file);
+      data.append('tax_year', $('tax-year').value);
+      $('error-box').style.display = 'none';
+      $('result-box').style.display = 'none';
+      $('progress').style.display = 'block';
+      $('modal-actions').style.display = 'none';
+      setProgress(15, 'Uploading county file…');
       try {
-        setProgress(30, 'Filtering by tax year...');
-        const res = await fetch('/process', { method: 'POST', body: formData });
-        setProgress(65, 'Removing businesses, LLCs & cannabis...');
-        const data = await res.json();
-        setProgress(90, 'Flagging deceased owners...');
-
-        if (!data.success) {
-          show('upload-card'); hide('progress-card');
-          showError('error-box', data.error || 'Something went wrong.');
-          return;
-        }
-
-        setProgress(100, 'Done!');
-        const s = data.stats;
-        currentJobId = data.job_id;
-
-        document.getElementById('stat-original').textContent = s.original.toLocaleString();
-        document.getElementById('stat-year').textContent     = s.removed_year.toLocaleString();
-        document.getElementById('stat-biz').textContent      = s.removed_business.toLocaleString();
-        document.getElementById('stat-cannabis').textContent = (s.removed_cannabis || 0).toLocaleString();
-        document.getElementById('stat-deceased').textContent = (s.deceased_flagged || 0).toLocaleString();
-        document.getElementById('stat-final').textContent    = s.final.toLocaleString();
-        document.getElementById('skip-count').textContent    = s.final.toLocaleString();
-        document.getElementById('download-btn').href         = '/download/' + data.download_file;
-
-        const skipBtn   = document.getElementById('btn-skiptrace');
-        const skipBadge = document.getElementById('skip-badge');
-        if (data.skip_trace_available) {
-          skipBadge.textContent = 'Ready'; skipBadge.className = 'pill pill-ready'; skipBtn.disabled = false;
-        } else {
-          skipBadge.textContent = 'API not configured'; skipBadge.className = 'pill pill-warn'; skipBtn.disabled = true;
-        }
-
-        setStepDone(1); setStepActive(2);
-
-        setTimeout(() => { hide('progress-card'); show('results-card'); }, 500);
-
-      } catch {
-        show('upload-card'); hide('progress-card');
-        showError('error-box', 'Connection error. Make sure the app is running.');
-      }
-    });
-
-    async function runSkipTrace() {
-      if (!currentJobId) return;
-      const btn = document.getElementById('btn-skiptrace');
-      btn.disabled = true;
-      show('skiptrace-progress');
-      hide('error-skiptrace');
-
-      try {
-        const res  = await fetch(`/skiptrace/${currentJobId}`, { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok || data.error) throw new Error(data.error || 'Skip tracing failed');
-
-        document.getElementById('stat-matched').textContent = (data.trace_stats.records_matched || 0).toLocaleString();
-        document.getElementById('stat-sent').textContent    = (data.trace_stats.records_sent    || 0).toLocaleString();
-        document.getElementById('download-enriched').href   = '/download/' + data.download_file;
-        show('skiptrace-results');
-      } catch (err) {
-        showError('error-skiptrace', err.message);
-        btn.disabled = false;
+        setTimeout(() => setProgress(42, 'Removing businesses and non-target records…'), 220);
+        const response = await fetch('/process', { method: 'POST', body: data });
+        setProgress(78, 'Building deceased-owner and research queues…');
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'The list could not be processed.');
+        setProgress(100, 'Processing complete');
+        $('result-copy').textContent = `${nf.format(result.stats.final)} actionable leads prepared · ${nf.format(result.stats.deceased_flagged || 0)} deceased-owner signals flagged.`;
+        $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
+        $('result-box').style.display = 'block';
+        setTimeout(loadDashboard, 300);
+      } catch (error) {
+        $('error-box').textContent = error.message;
+        $('error-box').style.display = 'block';
+        $('modal-actions').style.display = 'flex';
       } finally {
-        hide('skiptrace-progress');
+        setTimeout(() => { $('progress').style.display = 'none'; }, 350);
+      }
+    }
+    processButton.addEventListener('click', processList);
+
+    function attentionIcon(type) {
+      if (type === 'deceased') return '✓';
+      if (type === 'research') return '⌕';
+      return '◌';
+    }
+
+    function renderAttention(items) {
+      if (!items.length) return;
+      $('attention-list').innerHTML = items.map(item => `
+        <div class="attention-row" data-coming="${item.title}">
+          <div class="signal-icon ${item.priority.toLowerCase()}">${attentionIcon(item.type)}</div>
+          <div class="attention-copy"><strong>${item.title}</strong><span>${item.detail}</span></div>
+          <div class="attention-count">${nf.format(item.count)}</div>
+        </div>`).join('');
+      $('attention-list').querySelectorAll('[data-coming]').forEach(row => row.addEventListener('click', () => showToast(`${row.dataset.coming} workspace is coming in the next build.`)));
+    }
+
+    function renderJobs(jobs) {
+      if (!jobs.length) return;
+      $('recent-jobs').innerHTML = jobs.map((job, index) => {
+        const stats = job.stats || {};
+        const research = (stats.absentee_signal_strong || 0) + (stats.absentee_signal_weak || 0);
+        const output = job.download_available ? `<a class="download-link" href="/download/${encodeURIComponent(job.output_filename)}">Download</a>` : 'Unavailable';
+        return `<tr><td class="job-name">${index === 0 ? 'Latest county run' : `Processing run ${jobs.length-index}`}</td><td>${job.tax_year || '—'}</td><td>${nf.format(stats.final || 0)}</td><td>${nf.format(stats.deceased_flagged || 0)}</td><td>${nf.format(research)}</td><td>${job.completed_label}</td><td>${output}</td></tr>`;
+      }).join('');
+    }
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch('/api/dashboard');
+        const data = await response.json();
+        const metrics = data.metrics || {};
+        $('metric-leads').textContent = nf.format(metrics.actionable_leads || 0);
+        $('metric-deceased').textContent = nf.format(metrics.deceased_signals || 0);
+        $('metric-research').textContent = nf.format(metrics.research_queue || 0);
+        $('metric-contacts').textContent = nf.format(metrics.contacts_found || 0);
+        $('lead-count').textContent = nf.format(metrics.actionable_leads || 0);
+        $('deceased-count').textContent = nf.format(metrics.deceased_signals || 0);
+        $('research-count').textContent = nf.format(metrics.research_queue || 0);
+        $('today-count').textContent = data.attention?.reduce((sum, item) => sum + (item.count || 0), 0) || 0;
+        if (data.has_data) {
+          $('welcome-copy').textContent = `${nf.format(metrics.deceased_signals + metrics.research_queue)} records need evidence review from your latest list.`;
+          $('latest-sync').textContent = `Last processed ${data.latest_job.completed_label}`;
+          renderAttention(data.attention || []);
+          renderJobs(data.recent_jobs || []);
+        }
+      } catch {
+        $('latest-sync').textContent = 'Dashboard data unavailable';
       }
     }
 
-    document.getElementById('reset-btn').addEventListener('click', () => {
-      hide('results-card'); show('upload-card');
-      hide('skiptrace-results');
-      document.getElementById('step-indicator-1').className = 'step-item active';
-      document.getElementById('step-indicator-1').querySelector('.step-num').textContent = '1';
-      document.getElementById('step-indicator-2').className = 'step-item';
-      document.getElementById('step-indicator-2').querySelector('.step-num').textContent = '2';
-      fileInput.value = ''; fileLabel.textContent = '';
-      processBtn.disabled = true; currentJobId = null;
-    });
+    function runCommand(command) {
+      const normalized = command.toLowerCase();
+      if (normalized.includes('import') || normalized.includes('upload') || normalized.includes('list')) return openImport();
+      if (normalized.includes('deceased') || normalized.includes('probate')) return showToast('Deceased & Probate workspace is the next CRM module.');
+      if (normalized.includes('research')) return showToast('Research Queue is the next CRM module.');
+      if (normalized.includes('phone') || normalized.includes('contact')) return showToast('Contact enrichment is the next CRM module.');
+      showToast('This command will become actionable as the CRM modules are connected.');
+    }
+    $('command-form').addEventListener('submit', event => { event.preventDefault(); runCommand($('command-input').value); });
+    document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => { $('command-input').value = button.dataset.command; runCommand(button.dataset.command); }));
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeImport(); });
+    loadDashboard();
   </script>
 </body>
 </html>
