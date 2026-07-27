@@ -445,7 +445,7 @@
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'The list could not be processed.');
         setProgress(100, 'Processing complete');
-        $('result-copy').textContent = `${nf.format(result.stats.final)} actionable leads prepared · ${nf.format(result.stats.deceased_flagged || 0)} deceased-owner signals flagged.`;
+        $('result-copy').textContent = `${nf.format(result.stats.qualified || result.stats.final || 0)} qualified leads · ${nf.format(result.stats.review || 0)} need review · ${nf.format(result.stats.excluded || 0)} excluded with reasons. Nothing is committed to the CRM until approved.`;
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
         $('result-box').style.display = 'block';
         setTimeout(loadDashboard, 300);
@@ -480,7 +480,7 @@
       if (!jobs.length) return;
       $('recent-jobs').innerHTML = jobs.map((job, index) => {
         const stats = job.stats || {};
-        const research = (stats.absentee_signal_strong || 0) + (stats.absentee_signal_weak || 0);
+        const research = stats.review ?? ((stats.absentee_signal_strong || 0) + (stats.absentee_signal_weak || 0));
         const output = job.download_available ? `<a class="download-link" href="/download/${encodeURIComponent(job.output_filename)}">Download</a>` : 'Unavailable';
         return `<tr><td class="job-name">${index === 0 ? 'Latest county run' : `Processing run ${jobs.length-index}`}</td><td>${job.tax_year || '—'}</td><td>${nf.format(stats.final || 0)}</td><td>${nf.format(stats.deceased_flagged || 0)}</td><td>${nf.format(research)}</td><td>${job.completed_label}</td><td>${output}</td></tr>`;
       }).join('');

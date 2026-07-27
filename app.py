@@ -12,6 +12,7 @@ from crm import (
     RESEARCH_STATUSES,
     CRMRepository,
 )
+from qualification import qualify_leads
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -511,8 +512,11 @@ def get_dashboard_snapshot():
         'actionable_leads': int(latest_stats.get('final', 0)),
         'deceased_signals': int(latest_stats.get('deceased_flagged', 0)),
         'research_queue': int(
-            latest_stats.get('absentee_signal_strong', 0)
-            + latest_stats.get('absentee_signal_weak', 0)
+            latest_stats.get(
+                'review',
+                latest_stats.get('absentee_signal_strong', 0)
+                + latest_stats.get('absentee_signal_weak', 0),
+            )
         ),
         'contacts_found': int(latest_stats.get('with_phone', 0)),
         'overdue_follow_ups': 0,
@@ -664,7 +668,9 @@ def process():
         return jsonify({'error': f'Could not read file: {str(e)}'}), 400
 
     try:
-        cleaned_df, deceased_df, suspected_df, stats = clean_leads(df, tax_year)
+        qualification = qualify_leads(df, tax_year)
+        cleaned_df = qualification['qualified']
+        stats = qualification['stats']
     except Exception as e:
         return jsonify({'error': f'Error during cleaning: {str(e)}', 'columns_found': list(df.columns)}), 500
 
@@ -672,13 +678,13 @@ def process():
     output_filename = f'Clean_Leads_{tax_year}_{date_str}_{uid}.xlsx'
     output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
-    # Write three tabs: "All Leads", "Deceased Owners" (regex-confirmed), and
-    # "Suspected - Verify Manually" (heuristic-flagged, needs OK2Explore/OSCN/etc.)
     save_excel_formatted(
         {
-            'All Leads': cleaned_df,
-            'Deceased Owners': deceased_df,
-            'Suspected - Verify Manually': suspected_df,
+            'Qualified Leads': qualification['qualified'],
+            'Needs Review': qualification['review'],
+            'Deceased Research': qualification['deceased'],
+            'Absentee Opportunities': qualification['absentee'],
+            'Excluded Records': qualification['excluded'],
         },
         output_path
     )
@@ -694,28 +700,15 @@ def process():
     with open(meta_path, 'w') as f:
         json.dump(job_meta, f)
 
-    crm_columns = {
-        'tax_id': find_column(cleaned_df, ['TAX', 'ID']),
-        'owner_name': find_column(cleaned_df, ['OWNER', 'NAME']),
-        'total_due': find_column(cleaned_df, ['TOTAL', 'DUE']),
-        'phone': find_column(cleaned_df, ['PHONE']),
-        'mailing_address': find_column(cleaned_df, ['ADDRESS']),
-        'mailing_city': find_column(cleaned_df, ['OWNR_ADDR', '6']),
-        'mailing_state': find_column(cleaned_df, ['OWNR_ADDR', 'ST']),
-        'zip_code': find_column(cleaned_df, ['ZIP']),
-        'street_number': find_column(cleaned_df, ['ST_NO']),
-        'street_name': find_column(cleaned_df, ['ST_NAME']),
-        'street_type': find_column(cleaned_df, ['ST_STREET', 'TYPE']),
-        'property_city': find_column(cleaned_df, ['ST_CITY']),
-        'deceased_flag': 'Deceased Owner (Flagged)',
-        'mailing_signal': 'Absentee/Suspicious Mailing (Verify)',
-    }
-    imported_to_crm = get_crm().import_leads(cleaned_df, job_meta, crm_columns)
+    # Qualification runs remain reviewable exports. A separate explicit commit
+    # action will import approved leads into the production CRM.
+    imported_to_crm = 0
 
     return jsonify({
         'success': True,
         'stats': stats,
         'crm_imported': imported_to_crm,
+        'requires_review': True,
         'download_file': output_filename,
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'
