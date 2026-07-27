@@ -53,20 +53,38 @@ Open browser → **http://localhost:5000**
 
 ## CRM database
 
-The CRM uses SQLite by default and creates its database at:
+Local development uses SQLite by default and creates its database at:
 
 ```text
 data/leadcleaner.db
 ```
 
-To use a different location, set:
+To use a different local location, set:
 
 ```bash
 export CRM_DATABASE=/persistent/path/leadcleaner.db
 ```
 
-Production hosting must mount that location on persistent storage. A later
-PostgreSQL migration can replace SQLite without changing the browser API.
+Production uses PostgreSQL automatically when `DATABASE_URL` is present:
+
+```bash
+export DATABASE_URL=postgresql://user:password@host/database
+```
+
+The application accepts Render's internal PostgreSQL URL directly, creates the
+schema idempotently on startup, and verifies connections before reusing them.
+Keep the database in the same Render region as the web service and store the
+internal URL as a secret environment variable named `DATABASE_URL`.
+
+The health endpoint confirms which database engine is active without exposing
+credentials:
+
+```text
+GET /api/health
+{"database":"postgresql","status":"ok"}
+```
+
+Do not commit or paste the database URL into source code, issues, or chat.
 
 ---
 
