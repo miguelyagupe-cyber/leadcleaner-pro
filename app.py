@@ -6,14 +6,30 @@ import uuid
 import json
 import requests
 from datetime import datetime
+from crm import (
+    CRM_PRIORITIES,
+    CRM_STATUSES,
+    RESEARCH_STATUSES,
+    CRMRepository,
+)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
+app.config['CRM_DATABASE'] = os.environ.get(
+    'CRM_DATABASE',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
+)
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
+
+
+def get_crm():
+    repository = CRMRepository(app.config['CRM_DATABASE'])
+    repository.initialize()
+    return repository
 
 # ─── SKIP TRACING CONFIG ──────────────────────────────────────────────────────
 SKIP_TRACE_PROVIDER = 'none'
@@ -487,47 +503,51 @@ def get_dashboard_snapshot():
     latest = jobs[0] if jobs else None
     latest_stats = latest['stats'] if latest else {}
 
+    crm_metrics = get_crm().dashboard_metrics()
+    has_crm_data = crm_metrics['actionable_leads'] > 0
+    metrics = crm_metrics if has_crm_data else {
+        'actionable_leads': int(latest_stats.get('final', 0)),
+        'deceased_signals': int(latest_stats.get('deceased_flagged', 0)),
+        'research_queue': int(
+            latest_stats.get('absentee_signal_strong', 0)
+            + latest_stats.get('absentee_signal_weak', 0)
+        ),
+        'contacts_found': int(latest_stats.get('with_phone', 0)),
+        'overdue_follow_ups': 0,
+    }
+
     return {
-        'has_data': bool(latest),
+        'has_data': bool(latest) or has_crm_data,
         'generated_at': datetime.now().isoformat(),
-        'metrics': {
-            'actionable_leads': int(latest_stats.get('final', 0)),
-            'deceased_signals': int(latest_stats.get('deceased_flagged', 0)),
-            'research_queue': int(
-                latest_stats.get('absentee_signal_strong', 0)
-                + latest_stats.get('absentee_signal_weak', 0)
-            ),
-            'contacts_found': int(latest_stats.get('with_phone', 0)),
-        },
+        'metrics': metrics,
         'attention': [
             {
                 'type': 'deceased',
                 'priority': 'High',
                 'title': 'Review deceased-owner evidence',
-                'detail': f"{int(latest_stats.get('deceased_flagged', 0))} records flagged by county-data patterns",
-                'count': int(latest_stats.get('deceased_flagged', 0)),
+                'detail': f"{metrics['deceased_signals']} records flagged by county-data patterns",
+                'count': metrics['deceased_signals'],
             },
             {
                 'type': 'research',
                 'priority': 'Medium',
                 'title': 'Investigate suspicious mailing records',
-                'detail': (
-                    f"{int(latest_stats.get('absentee_signal_strong', 0))} strong signals · "
-                    f"{int(latest_stats.get('absentee_signal_weak', 0))} weak signals"
-                ),
-                'count': int(
-                    latest_stats.get('absentee_signal_strong', 0)
-                    + latest_stats.get('absentee_signal_weak', 0)
-                ),
+                'detail': f"{metrics['research_queue']} records still require evidence review",
+                'count': metrics['research_queue'],
             },
             {
                 'type': 'contact',
                 'priority': 'Normal',
                 'title': 'Prepare leads for contact',
-                'detail': f"{int(latest_stats.get('without_phone', 0))} records still need contact data",
-                'count': int(latest_stats.get('without_phone', 0)),
+                'detail': (
+                    f"{max(metrics['actionable_leads'] - metrics['contacts_found'], 0)} "
+                    "records still need contact data"
+                ),
+                'count': max(
+                    metrics['actionable_leads'] - metrics['contacts_found'], 0
+                ),
             },
-        ] if latest else [],
+        ] if latest or has_crm_data else [],
         'latest_job': latest,
         'recent_jobs': jobs[:5],
     }
@@ -536,6 +556,76 @@ def get_dashboard_snapshot():
 @app.route('/api/dashboard')
 def dashboard_snapshot():
     return jsonify(get_dashboard_snapshot())
+
+
+@app.route('/leads')
+def leads_page():
+    return render_template(
+        'leads.html',
+        page_mode='leads',
+        statuses=CRM_STATUSES,
+        priorities=CRM_PRIORITIES,
+        research_statuses=RESEARCH_STATUSES,
+    )
+
+
+@app.route('/research')
+def research_page():
+    return render_template(
+        'leads.html',
+        page_mode='research',
+        statuses=CRM_STATUSES,
+        priorities=CRM_PRIORITIES,
+        research_statuses=RESEARCH_STATUSES,
+    )
+
+
+@app.route('/api/leads')
+def api_leads():
+    try:
+        result = get_crm().list_leads(
+            search=request.args.get('q', '').strip(),
+            status=request.args.get('status', '').strip(),
+            priority=request.args.get('priority', '').strip(),
+            research_only=request.args.get('research_only', '').lower() == 'true',
+            page=request.args.get('page', 1),
+            per_page=request.args.get('per_page', 50),
+        )
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid pagination or filter value'}), 400
+    return jsonify(result)
+
+
+@app.route('/api/leads/<int:lead_id>')
+def api_lead_detail(lead_id):
+    lead = get_crm().get_lead(lead_id)
+    if not lead:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify(lead)
+
+
+@app.route('/api/leads/<int:lead_id>', methods=['PATCH'])
+def api_update_lead(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        lead = get_crm().update_lead(lead_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not lead:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, 'lead': lead})
+
+
+@app.route('/api/leads/<int:lead_id>/notes', methods=['POST'])
+def api_add_lead_note(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        note = get_crm().add_note(lead_id, payload.get('body'))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not note:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, 'note': note}), 201
 
 
 @app.route('/process', methods=['POST'])
@@ -588,6 +678,7 @@ def process():
 
     job_meta = {
         'uid': uid,
+        'source_filename': file.filename,
         'output_filename': output_filename,
         'tax_year': tax_year,
         'stats': stats
@@ -596,9 +687,28 @@ def process():
     with open(meta_path, 'w') as f:
         json.dump(job_meta, f)
 
+    crm_columns = {
+        'tax_id': find_column(cleaned_df, ['TAX', 'ID']),
+        'owner_name': find_column(cleaned_df, ['OWNER', 'NAME']),
+        'total_due': find_column(cleaned_df, ['TOTAL', 'DUE']),
+        'phone': find_column(cleaned_df, ['PHONE']),
+        'mailing_address': find_column(cleaned_df, ['ADDRESS']),
+        'mailing_city': find_column(cleaned_df, ['OWNR_ADDR', '6']),
+        'mailing_state': find_column(cleaned_df, ['OWNR_ADDR', 'ST']),
+        'zip_code': find_column(cleaned_df, ['ZIP']),
+        'street_number': find_column(cleaned_df, ['ST_NO']),
+        'street_name': find_column(cleaned_df, ['ST_NAME']),
+        'street_type': find_column(cleaned_df, ['ST_STREET', 'TYPE']),
+        'property_city': find_column(cleaned_df, ['ST_CITY']),
+        'deceased_flag': 'Deceased Owner (Flagged)',
+        'mailing_signal': 'Absentee/Suspicious Mailing (Verify)',
+    }
+    imported_to_crm = get_crm().import_leads(cleaned_df, job_meta, crm_columns)
+
     return jsonify({
         'success': True,
         'stats': stats,
+        'crm_imported': imported_to_crm,
         'download_file': output_filename,
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'

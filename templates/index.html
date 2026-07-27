@@ -280,11 +280,11 @@
         </div>
         <div class="nav-section">
           <div class="nav-label">Intelligence</div>
-          <button class="nav-item" data-coming="Lead workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6m-3-3h6"/></svg><span>Leads</span><span class="nav-count" id="lead-count">0</span></button>
+          <a class="nav-item" href="/leads"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6m-3-3h6"/></svg><span>Leads</span><span class="nav-count" id="lead-count">0</span></a>
           <button class="nav-item" data-coming="Property workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg><span>Properties</span></button>
-          <button class="nav-item" data-coming="Deceased and probate workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Deceased &amp; Probate</span><span class="nav-count" id="deceased-count">0</span></button>
-          <button class="nav-item" data-coming="Research queue"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><span>Research Queue</span><span class="nav-count" id="research-count">0</span></button>
-          <button class="nav-item" data-coming="Pipeline workspace"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v4H4zM4 10h10v4H4zM4 16h6v4H4z"/></svg><span>Pipeline</span></button>
+          <a class="nav-item" href="/research"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>Deceased &amp; Probate</span><span class="nav-count" id="deceased-count">0</span></a>
+          <a class="nav-item" href="/research"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><span>Research Queue</span><span class="nav-count" id="research-count">0</span></a>
+          <a class="nav-item" href="/leads?status=interested"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v4H4zM4 10h10v4H4zM4 16h6v4H4z"/></svg><span>Pipeline</span></a>
         </div>
         <div class="nav-section">
           <div class="nav-label">Operations</div>
@@ -340,8 +340,8 @@
             <div class="panel-header"><div><div class="panel-title">Quick actions</div><div class="panel-subtitle">Move directly into today’s work</div></div></div>
             <div class="quick-actions">
               <button class="quick-action" data-action="import"><span class="quick-action-icon">↓</span><span><strong>Import Tulsa list</strong><span>Clean and prioritize county data</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
-              <button class="quick-action" data-coming="Deceased-owner review"><span class="quick-action-icon">✓</span><span><strong>Review deceased signals</strong><span>Inspect evidence before outreach</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
-              <button class="quick-action" data-coming="Research queue"><span class="quick-action-icon">⌕</span><span><strong>Continue research</strong><span>Resolve identity and probate signals</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
+              <a class="quick-action" href="/research"><span class="quick-action-icon">✓</span><span><strong>Review deceased signals</strong><span>Inspect evidence before outreach</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></a>
+              <a class="quick-action" href="/research"><span class="quick-action-icon">⌕</span><span><strong>Continue research</strong><span>Resolve identity and probate signals</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></a>
               <button class="quick-action" data-coming="Call logging"><span class="quick-action-icon">◌</span><span><strong>Log a call</strong><span>Record outcome and next action</span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></button>
             </div>
           </article>
@@ -468,12 +468,12 @@
     function renderAttention(items) {
       if (!items.length) return;
       $('attention-list').innerHTML = items.map(item => `
-        <div class="attention-row" data-coming="${item.title}">
+        <div class="attention-row" data-href="${item.type === 'contact' ? '/leads' : '/research'}">
           <div class="signal-icon ${item.priority.toLowerCase()}">${attentionIcon(item.type)}</div>
           <div class="attention-copy"><strong>${item.title}</strong><span>${item.detail}</span></div>
           <div class="attention-count">${nf.format(item.count)}</div>
         </div>`).join('');
-      $('attention-list').querySelectorAll('[data-coming]').forEach(row => row.addEventListener('click', () => showToast(`${row.dataset.coming} workspace is coming in the next build.`)));
+      $('attention-list').querySelectorAll('[data-href]').forEach(row => row.addEventListener('click', () => window.location.assign(row.dataset.href)));
     }
 
     function renderJobs(jobs) {
@@ -501,7 +501,9 @@
         $('today-count').textContent = data.attention?.reduce((sum, item) => sum + (item.count || 0), 0) || 0;
         if (data.has_data) {
           $('welcome-copy').textContent = `${nf.format(metrics.deceased_signals + metrics.research_queue)} records need evidence review from your latest list.`;
-          $('latest-sync').textContent = `Last processed ${data.latest_job.completed_label}`;
+          $('latest-sync').textContent = data.latest_job
+            ? `Last processed ${data.latest_job.completed_label}`
+            : 'CRM records synchronized';
           renderAttention(data.attention || []);
           renderJobs(data.recent_jobs || []);
         }
@@ -513,9 +515,9 @@
     function runCommand(command) {
       const normalized = command.toLowerCase();
       if (normalized.includes('import') || normalized.includes('upload') || normalized.includes('list')) return openImport();
-      if (normalized.includes('deceased') || normalized.includes('probate')) return showToast('Deceased & Probate workspace is the next CRM module.');
-      if (normalized.includes('research')) return showToast('Research Queue is the next CRM module.');
-      if (normalized.includes('phone') || normalized.includes('contact')) return showToast('Contact enrichment is the next CRM module.');
+      if (normalized.includes('deceased') || normalized.includes('probate')) return window.location.assign('/research');
+      if (normalized.includes('research')) return window.location.assign('/research');
+      if (normalized.includes('phone') || normalized.includes('contact')) return window.location.assign('/leads');
       showToast('This command will become actionable as the CRM modules are connected.');
     }
     $('command-form').addEventListener('submit', event => { event.preventDefault(); runCommand($('command-input').value); });
