@@ -183,6 +183,19 @@ phone or email never overwrites trusted CRM data: it is preserved as a recorded
 conflict for review. Batch status, estimated spend, update count, conflicts,
 and records without results remain available in PostgreSQL.
 
+## Import operations center
+
+The Imports workspace provides one durable ledger for every county-list run.
+It accepts XLSX, XLS, and CSV uploads, starts the existing evidence-safe
+qualification workflow, and shows each job's tax year, status, progress,
+Assessor checks, downloadable artifact, and resume action.
+
+Jobs and artifacts remain backed by PostgreSQL, so a Render restart does not
+erase processing state. A resume link reopens the dashboard workflow at the
+saved stage. Google Drive is deliberately labelled as not connected: the
+current release uses explicit manual uploads and does not imply background
+access to Daryl's files.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

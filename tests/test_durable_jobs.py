@@ -139,6 +139,35 @@ class DurableProcessingJobsTest(unittest.TestCase):
         self.assertTrue(job['actions']['verify_assessor'])
         self.assertTrue(job['actions']['preview_approval'])
 
+    def test_import_operations_lists_durable_jobs_and_resume_link(self):
+        job_id = 'operations-job'
+        self.repository.save_processing_job({
+            'uid': job_id,
+            'status': 'qualification_ready',
+            'source_filename': 'tulsa-county.xlsx',
+            'output_filename': 'qualified.xlsx',
+            'tax_year': 2023,
+            'stats': {'prequalified': 12, 'final': 12},
+            'created_at': '2026-07-28T10:00:00',
+        })
+        self.repository.save_processing_artifact(
+            job_id,
+            'qualified',
+            'qualified.xlsx',
+            b'workbook bytes',
+        )
+
+        page = self.client.get('/imports')
+        payload = self.client.get('/api/imports').get_json()
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Every county list, under control.', page.data)
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['active'], 1)
+        self.assertEqual(payload['needs_attention'], 0)
+        self.assertEqual(payload['jobs'][0]['id'], job_id)
+        self.assertTrue(payload['jobs'][0]['download_available'])
+
 
 if __name__ == '__main__':
     unittest.main()

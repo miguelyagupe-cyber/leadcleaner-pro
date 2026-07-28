@@ -954,6 +954,11 @@ def enrichment_page():
     return render_template('enrichment.html')
 
 
+@app.route('/imports')
+def imports_page():
+    return render_template('imports.html')
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -1021,6 +1026,38 @@ def api_acquisition_report():
 @app.route('/api/enrichment')
 def api_enrichment_summary():
     return jsonify(get_crm().enrichment_summary())
+
+
+@app.route('/api/imports')
+def api_import_operations():
+    repository = get_crm()
+    jobs = []
+    for meta in repository.list_processing_jobs(limit=100):
+        snapshot = processing_job_snapshot(meta)
+        output_filename = snapshot['output_filename']
+        snapshot['created_at'] = (
+            meta.get('_created_at')
+            or meta.get('created_at')
+        )
+        snapshot['updated_at'] = (
+            meta.get('_updated_at')
+            or snapshot['created_at']
+        )
+        snapshot['download_available'] = bool(
+            output_filename
+            and repository.get_processing_artifact(filename=output_filename)
+        )
+        jobs.append(snapshot)
+    return jsonify({
+        'jobs': jobs,
+        'total': len(jobs),
+        'active': sum(
+            job['status'] not in ('imported', 'failed') for job in jobs
+        ),
+        'needs_attention': sum(
+            job['status'] == 'failed' for job in jobs
+        ),
+    })
 
 
 @app.route('/api/enrichment/batches', methods=['POST'])
