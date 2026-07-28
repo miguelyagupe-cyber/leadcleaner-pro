@@ -334,6 +334,50 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Log a call', response.data)
         self.assertIn(b'Save call outcome', response.data)
 
+    def test_daily_check_in_tracks_recorded_work_and_closes_day(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        started = self.repository.start_daily_check_in({
+            'focus': 'Clear the probate research queue',
+            'call_target': 5,
+            'research_target': 2,
+        })
+        self.repository.log_call(
+            lead_id,
+            {
+                'direction': 'outbound',
+                'outcome': 'not_interested',
+                'phone_number': '9185550100',
+            },
+        )
+        self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'other',
+                'outcome': 'inconclusive',
+                'confidence': 'weak',
+                'identity_match': 'uncertain',
+                'source_name': 'Manual research',
+            },
+        )
+        progress = self.client.get('/api/today/execution').get_json()
+        closed = self.client.post(
+            '/api/today/check-out',
+            json={'closing_notes': 'Completed the priority review.'},
+        ).get_json()
+        page = self.client.get('/today')
+
+        self.assertEqual(started['check_in']['status'], 'open')
+        self.assertEqual(progress['timezone'], 'America/Chicago')
+        self.assertEqual(progress['check_in']['call_progress']['completed'], 1)
+        self.assertEqual(progress['check_in']['research_progress']['completed'], 1)
+        self.assertEqual(closed['check_in']['status'], 'completed')
+        self.assertEqual(
+            closed['check_in']['closing_notes'],
+            'Completed the priority review.',
+        )
+        self.assertIn(b'Daily execution', page.data)
+        self.assertIn(b'Today\xe2\x80\x99s primary focus', page.data)
+
     def test_pipeline_board_aggregates_stages_and_debt(self):
         board = self.repository.pipeline_board()
         stages = {stage['status']: stage for stage in board['stages']}

@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from sqlalchemy import (
@@ -307,6 +308,20 @@ class EnrichmentBatch(Base):
     result_summary_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DailyCheckIn(Base):
+    __tablename__ = 'daily_check_ins'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    work_date: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
+    focus: Mapped[str] = mapped_column(Text, nullable=False)
+    call_target: Mapped[int] = mapped_column(Integer, nullable=False)
+    research_target: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    closing_notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 def _as_dict(instance):
@@ -1654,3 +1669,114 @@ class CRMRepository:
             batch.result_summary_json = json.dumps(summary)
             batch.updated_at = now
         return self.get_enrichment_batch(batch_id)
+
+    def daily_execution(self):
+        local_zone = ZoneInfo('America/Chicago')
+        local_now = datetime.now(local_zone)
+        work_date = local_now.date().isoformat()
+        local_start = datetime.combine(
+            local_now.date(),
+            datetime.min.time(),
+            tzinfo=local_zone,
+        )
+        utc_start = local_start.astimezone(timezone.utc)
+        today = work_date
+        with self.Session() as session:
+            check_in = session.scalar(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.work_date == work_date
+                )
+            )
+            calls = session.scalar(
+                select(func.count()).select_from(CallLog).where(
+                    CallLog.created_at >= utc_start
+                )
+            ) or 0
+            research = session.scalar(
+                select(func.count()).select_from(ResearchEvidence).where(
+                    ResearchEvidence.created_at >= utc_start,
+                    ResearchEvidence.retracted_at.is_(None),
+                )
+            ) or 0
+            follow_ups = session.scalar(
+                select(func.count()).select_from(Lead).where(
+                    Lead.next_follow_up.is_not(None),
+                    Lead.next_follow_up <= today,
+                    Lead.status.not_in(('closed', 'disqualified')),
+                )
+            ) or 0
+        item = _as_dict(check_in) if check_in else None
+        if item:
+            item['call_progress'] = {
+                'completed': int(calls),
+                'target': item['call_target'],
+                'percent': min(
+                    round(calls / max(item['call_target'], 1) * 100),
+                    100,
+                ),
+            }
+            item['research_progress'] = {
+                'completed': int(research),
+                'target': item['research_target'],
+                'percent': min(
+                    round(research / max(item['research_target'], 1) * 100),
+                    100,
+                ),
+            }
+        return {
+            'work_date': work_date,
+            'timezone': 'America/Chicago',
+            'check_in': item,
+            'calls_completed': int(calls),
+            'research_completed': int(research),
+            'follow_ups_due': int(follow_ups),
+        }
+
+    def start_daily_check_in(self, payload):
+        focus = str(payload.get('focus', '')).strip()
+        if not focus:
+            raise ValueError('Today’s focus is required')
+        try:
+            call_target = int(payload.get('call_target', 0))
+            research_target = int(payload.get('research_target', 0))
+        except (TypeError, ValueError) as error:
+            raise ValueError('Daily targets must be whole numbers') from error
+        if not 0 <= call_target <= 500 or not 0 <= research_target <= 500:
+            raise ValueError('Daily targets must be between 0 and 500')
+        work_date = datetime.now(ZoneInfo('America/Chicago')).date().isoformat()
+        now = utc_now()
+        with self.Session.begin() as session:
+            item = session.scalar(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.work_date == work_date
+                )
+            )
+            if item:
+                raise ValueError('Today’s check-in already exists')
+            session.add(DailyCheckIn(
+                work_date=work_date,
+                focus=focus,
+                call_target=call_target,
+                research_target=research_target,
+                status='open',
+                created_at=now,
+            ))
+        return self.daily_execution()
+
+    def close_daily_check_in(self, closing_notes):
+        work_date = datetime.now(ZoneInfo('America/Chicago')).date().isoformat()
+        notes = str(closing_notes or '').strip() or None
+        now = utc_now()
+        with self.Session.begin() as session:
+            item = session.scalar(
+                select(DailyCheckIn).where(
+                    DailyCheckIn.work_date == work_date
+                )
+            )
+            if not item:
+                return None
+            if item.status != 'completed':
+                item.status = 'completed'
+                item.closing_notes = notes
+                item.completed_at = now
+        return self.daily_execution()
