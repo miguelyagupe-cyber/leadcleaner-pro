@@ -86,6 +86,23 @@ They are never converted into exclusions. Commercial or changed-owner records
 go to review; only matching Residential/Agricultural records become verified
 candidates.
 
+## Death and probate evidence ledger
+
+Research evidence is stored separately from county-data signals. Every item
+records its type, outcome, confidence, identity match, source, URL, case number,
+subject, event date, notes, and timestamp.
+
+`Confirmed deceased` requires an exact identity match plus confirmed official
+probate, death-index, or death-certificate evidence. Obituaries, estate text,
+skip-trace mismatches, and probable identity matches can prioritize research,
+but cannot confirm death. Confirmed living evidence marks a false positive;
+conflicting confirmed evidence remains unresolved.
+
+OSCN pages are saved as evidence links because OSCN itself warns that online
+docket information is not an official record. OK2Explore is useful but only
+indexes Oklahoma deaths at least five years old, so a missing result is never
+treated as evidence that a person is living.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

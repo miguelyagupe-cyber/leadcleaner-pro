@@ -107,6 +107,14 @@
     .activity { padding:9px 0 9px 15px; border-left:1px solid #313238; position:relative; color:var(--muted); font-size:10px; }
     .activity::before { content:""; position:absolute; width:5px; height:5px; border-radius:50%; background:var(--gold); left:-3px; top:14px; }
     .activity time { display:block; margin-top:3px; }
+    .evidence-summary { padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:4px; background:var(--bg); }
+    .evidence-summary strong { display:block; color:var(--gold-bright); font-size:12px; }
+    .evidence-summary span { display:block; margin-top:4px; color:var(--dim); font-size:10px; line-height:1.45; }
+    .evidence-card { padding:12px 0; border-bottom:1px solid var(--soft); }
+    .evidence-card:last-child { border:0; }
+    .evidence-card strong { color:#d8d5ce; font-size:11px; }
+    .evidence-card p { margin:5px 0; color:var(--muted); font-size:10px; line-height:1.5; }
+    .evidence-card a { color:var(--gold); font-size:9px; }
     .toast { position:fixed; right:24px; bottom:24px; padding:12px 15px; border:1px solid #36373d; border-radius:5px; background:#17181b; color:var(--muted); font-size:11px; opacity:0; transform:translateY(8px); transition:.2s; z-index:60; }
     .toast.show { opacity:1; transform:translateY(0); }
     @media(max-width:1000px) {
@@ -196,6 +204,24 @@
         </div>
       </section>
       <section class="section"><div class="section-title">Property & owner</div><div class="details" id="lead-details"></div></section>
+      <section class="section">
+        <div class="section-title">Death & probate evidence</div>
+        <div id="evidence-summary" class="evidence-summary"></div>
+        <div class="field-grid">
+          <div class="field"><label>Evidence type</label><select id="evidence-type">{% for value in evidence_types %}<option value="{{ value }}">{{ value.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Outcome</label><select id="evidence-outcome">{% for value in evidence_outcomes %}<option value="{{ value }}">{{ value.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Confidence</label><select id="evidence-confidence">{% for value in evidence_confidence %}<option value="{{ value }}">{{ value.title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Identity match</label><select id="identity-match">{% for value in identity_matches %}<option value="{{ value }}">{{ value.title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Source</label><input id="evidence-source" placeholder="OSCN, OK2Explore, obituary…"></div>
+          <div class="field"><label>Case number</label><input id="evidence-case" placeholder="PB-2024-525"></div>
+          <div class="field"><label>Subject name</label><input id="evidence-subject" placeholder="Name shown in evidence"></div>
+          <div class="field"><label>Event date</label><input id="evidence-date" type="date"></div>
+        </div>
+        <div class="field" style="margin-top:10px;"><label>Source URL</label><input id="evidence-url" placeholder="https://www.oscn.net/…"></div>
+        <textarea id="evidence-notes" placeholder="Record the identity match, address, representative, filing details, and remaining uncertainty…" style="margin-top:10px;"></textarea>
+        <button class="gold-button" id="add-evidence">Add evidence</button>
+        <div id="evidence-list"></div>
+      </section>
       <section class="section"><div class="section-title">Contact data</div><div class="field-grid"><div class="field"><label>Phone</label><input id="edit-phone" placeholder="Add phone number"></div><div class="field"><label>Email</label><input id="edit-email" type="email" placeholder="Add email address"></div></div><button class="gold-button" id="save-contact">Save contact</button></section>
       <section class="section"><div class="section-title">Add note</div><textarea id="note-body" placeholder="Record call outcome, research evidence or next action…"></textarea><button class="gold-button" id="add-note">Add note</button><div id="notes-list"></div></section>
       <section class="section"><div class="section-title">Activity history</div><div id="activity-list"></div></section>
@@ -254,11 +280,24 @@
         ['Mailing city',lead.mailing_city],['Mailing state',lead.mailing_state],['ZIP code',lead.zip_code],['Tax year',lead.tax_year],
         ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None']
       ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
-      renderNotes(lead.notes); renderActivity(lead.activity);
+      renderEvidence(lead.evidence, lead.evidence_summary); renderNotes(lead.notes); renderActivity(lead.activity);
       $('backdrop').classList.add('open'); $('drawer').classList.add('open');
     }
     function closeDrawer(){ $('backdrop').classList.remove('open'); $('drawer').classList.remove('open'); state.selectedLead=null; }
     function renderNotes(notes){ $('notes-list').innerHTML=notes?.length?notes.map(note=>`<div class="note"><p>${esc(note.body)}</p><time>${dateLabel(note.created_at)}</time></div>`).join(''):'<div class="note muted">No notes yet.</div>'; }
+    function renderEvidence(items, summary){
+      $('evidence-summary').innerHTML=`<strong>${esc(summary?.label || 'No evidence')}</strong><span>${esc(summary?.reason || 'No research evidence has been recorded')}</span>`;
+      $('evidence-list').innerHTML=items?.length?items.map(item=>`<div class="evidence-card"><strong>${label(item.evidence_type)} · ${label(item.outcome)}${item.retracted_at?' · Retracted':''}</strong><p>${esc(item.source_name)}${item.case_number?` · ${esc(item.case_number)}`:''}<br>${label(item.confidence)} confidence · ${label(item.identity_match)} identity match${item.notes?`<br>${esc(item.notes)}`:''}${item.retraction_reason?`<br>Retraction: ${esc(item.retraction_reason)}`:''}</p>${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noopener">Open source ↗</a>`:''}${!item.retracted_at?` <button class="clear retract-evidence" data-evidence-id="${item.id}" type="button">Retract</button>`:''}</div>`).join(''):'<div class="note muted">No evidence recorded yet.</div>';
+      document.querySelectorAll('.retract-evidence').forEach(button=>button.addEventListener('click',()=>retractEvidence(button.dataset.evidenceId)));
+    }
+    async function retractEvidence(evidenceId){
+      if(!state.selectedLead) return;
+      const reason=window.prompt('Why is this evidence being retracted?');
+      if(!reason?.trim()) return;
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/evidence/${evidenceId}`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason.trim()})});
+      const data=await response.json(); if(!response.ok) return toast(data.error||'Evidence could not be retracted');
+      state.selectedLead=data.lead; renderEvidence(data.lead.evidence,data.lead.evidence_summary); renderActivity(data.lead.activity); $('edit-research').value=data.lead.research_status; toast('Evidence retracted'); loadLeads();
+    }
     function renderActivity(items){ $('activity-list').innerHTML=items?.length?items.map(item=>`<div class="activity">${esc(item.detail)}<time>${dateLabel(item.created_at)}</time></div>`).join(''):'<div class="muted">No activity recorded.</div>'; }
     async function patchLead(changes){
       if(!state.selectedLead) return;
@@ -276,6 +315,20 @@
       const response=await fetch(`/api/leads/${state.selectedLead.id}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
       const data=await response.json(); if(!response.ok) return toast(data.error||'Note failed');
       $('note-body').value=''; await openLead(state.selectedLead.id); toast('Note added');
+    });
+    $('add-evidence').addEventListener('click',async()=>{
+      if(!state.selectedLead) return;
+      const payload={
+        evidence_type:$('evidence-type').value,outcome:$('evidence-outcome').value,
+        confidence:$('evidence-confidence').value,identity_match:$('identity-match').value,
+        source_name:$('evidence-source').value.trim(),source_url:$('evidence-url').value.trim(),
+        case_number:$('evidence-case').value.trim(),subject_name:$('evidence-subject').value.trim(),
+        event_date:$('evidence-date').value,notes:$('evidence-notes').value.trim()
+      };
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/evidence`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data=await response.json(); if(!response.ok) return toast(data.error||'Evidence could not be saved');
+      ['evidence-source','evidence-url','evidence-case','evidence-subject','evidence-date','evidence-notes'].forEach(id=>$(id).value='');
+      state.selectedLead=data.lead; renderEvidence(data.lead.evidence,data.lead.evidence_summary); renderActivity(data.lead.activity); $('edit-research').value=data.lead.research_status; toast('Evidence added'); loadLeads();
     });
     $('search').addEventListener('input',()=>{ clearTimeout(state.timer); state.timer=setTimeout(()=>{state.page=1;loadLeads();},250); });
     ['status-filter','priority-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
