@@ -141,6 +141,19 @@ schema idempotently on startup, and verifies connections before reusing them.
 Keep the database in the same Render region as the web service and store the
 internal URL as a secret environment variable named `DATABASE_URL`.
 
+### Durable processing storage
+
+Processing jobs no longer depend on Render's ephemeral filesystem. PostgreSQL
+stores job metadata plus the source, qualification, Assessor-verified, and
+skip-trace workbooks. The local `uploads/` and `outputs/` directories are only
+a fast, rebuildable cache.
+
+After a restart or deploy, the dashboard, downloads, Assessor batches, approval
+preview, and explicit CRM import restore the required artifacts from the
+database automatically. This deliberately favors workflow durability for the
+current low-frequency list cadence; retention policies or external object
+storage can be added when file volume makes that worthwhile.
+
 The health endpoint confirms which database engine is active without exposing
 credentials:
 

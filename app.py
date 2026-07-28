@@ -5,6 +5,7 @@ import os
 import uuid
 import json
 import hashlib
+import io
 import requests
 from datetime import datetime
 from crm import (
@@ -41,6 +42,62 @@ def get_crm():
     repository = CRMRepository(database_target)
     repository.initialize()
     return repository
+
+
+def save_job_meta(meta):
+    meta_path = os.path.join(
+        app.config['OUTPUT_FOLDER'],
+        f"{meta['uid']}_meta.json",
+    )
+    with open(meta_path, 'w') as file_handle:
+        json.dump(meta, file_handle)
+    get_crm().save_processing_job(meta)
+    return meta_path
+
+
+def load_job_meta(job_id):
+    meta_path = os.path.join(
+        app.config['OUTPUT_FOLDER'],
+        f'{job_id}_meta.json',
+    )
+    if os.path.exists(meta_path):
+        with open(meta_path) as file_handle:
+            return json.load(file_handle)
+    meta = get_crm().get_processing_job(job_id)
+    if not meta:
+        return None
+    meta.pop('_created_at', None)
+    meta.pop('_updated_at', None)
+    with open(meta_path, 'w') as file_handle:
+        json.dump(meta, file_handle)
+    return meta
+
+
+def persist_artifact(job_id, kind, filename, path):
+    with open(path, 'rb') as file_handle:
+        content = file_handle.read()
+    return get_crm().save_processing_artifact(
+        job_id,
+        kind,
+        filename,
+        content,
+    )
+
+
+def materialize_artifact(job_id, kind, filename, folder):
+    safe_name = os.path.basename(filename)
+    path = os.path.join(folder, safe_name)
+    if os.path.exists(path):
+        return path
+    artifact = get_crm().get_processing_artifact(
+        job_id=job_id,
+        kind=kind,
+    )
+    if not artifact:
+        return None
+    with open(path, 'wb') as file_handle:
+        file_handle.write(artifact['content'])
+    return path
 
 # ─── SKIP TRACING CONFIG ──────────────────────────────────────────────────────
 SKIP_TRACE_PROVIDER = 'none'
@@ -479,34 +536,65 @@ def index():
 def get_dashboard_snapshot():
     """Build the dashboard from completed processing jobs.
 
-    The current product has no database yet, so job metadata is the only
-    durable source of truth. Keeping this endpoint derived from real job data
-    avoids hard-coded dashboard metrics while giving the CRM rebuild a stable
-    API boundary.
+    PostgreSQL is the durable source of truth. The local output directory is
+    only a rebuildable cache for generated workbooks.
     """
     jobs = []
+    repository = get_crm()
+    stored_jobs = repository.list_processing_jobs(limit=20)
+    stored_ids = {meta.get('uid') for meta in stored_jobs}
+    # Preserve visibility of jobs created before durable storage was deployed.
+    # New jobs always enter PostgreSQL; these local records are a compatibility
+    # bridge and disappear naturally when Render replaces the old filesystem.
     for filename in os.listdir(app.config['OUTPUT_FOLDER']):
         if not filename.endswith('_meta.json'):
             continue
-
         meta_path = os.path.join(app.config['OUTPUT_FOLDER'], filename)
         try:
             with open(meta_path, encoding='utf-8') as meta_file:
                 meta = json.load(meta_file)
         except (OSError, ValueError):
             continue
+        if meta.get('uid') in stored_ids:
+            continue
+        meta['_updated_at'] = datetime.fromtimestamp(
+            os.path.getmtime(meta_path)
+        ).isoformat()
+        stored_jobs.append(meta)
 
-        output_filename = meta.get('output_filename', '')
-        output_path = os.path.join(app.config['OUTPUT_FOLDER'], os.path.basename(output_filename))
-        completed_at = datetime.fromtimestamp(os.path.getmtime(meta_path))
+    for meta in stored_jobs:
+        output_filename = meta.get(
+            'assessor_output_filename',
+            meta.get('output_filename', ''),
+        )
+        completed_value = (
+            meta.get('_updated_at')
+            or meta.get('created_at')
+            or meta.get('_created_at')
+        )
+        try:
+            completed_at = datetime.fromisoformat(completed_value)
+        except (TypeError, ValueError):
+            completed_at = datetime.now()
+        artifact = (
+            repository.get_processing_artifact(filename=output_filename)
+            if output_filename
+            else None
+        )
+        local_output = os.path.join(
+            app.config['OUTPUT_FOLDER'],
+            os.path.basename(output_filename),
+        )
         stats = meta.get('stats', {})
         jobs.append({
-            'id': meta.get('uid', filename.replace('_meta.json', '')),
+            'id': meta.get('uid'),
             'tax_year': meta.get('tax_year'),
             'completed_at': completed_at.isoformat(),
             'completed_label': completed_at.strftime('%b %d, %Y · %I:%M %p'),
             'output_filename': output_filename,
-            'download_available': bool(output_filename and os.path.exists(output_path)),
+            'download_available': bool(
+                artifact or (output_filename and os.path.exists(local_output))
+            ),
             'stats': stats,
         })
 
@@ -741,11 +829,12 @@ def process():
         'source_filename': file.filename,
         'output_filename': output_filename,
         'tax_year': tax_year,
-        'stats': stats
+        'stats': stats,
+        'created_at': datetime.now().isoformat(),
     }
-    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{uid}_meta.json')
-    with open(meta_path, 'w') as f:
-        json.dump(job_meta, f)
+    save_job_meta(job_meta)
+    persist_artifact(uid, 'source', os.path.basename(upload_path), upload_path)
+    persist_artifact(uid, 'qualification', output_filename, output_path)
 
     # Qualification runs remain reviewable exports. A separate explicit commit
     # action will import approved leads into the production CRM.
@@ -763,16 +852,19 @@ def process():
 
 
 def _approved_import_snapshot(job_id):
-    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
-    if not os.path.exists(meta_path):
+    meta = load_job_meta(job_id)
+    if not meta:
         raise FileNotFoundError('Processing job not found')
-    with open(meta_path) as file_handle:
-        meta = json.load(file_handle)
     verified_filename = meta.get('assessor_output_filename')
     if not verified_filename:
         raise ValueError('Assessor verification has not produced an approved workbook')
-    workbook_path = os.path.join(app.config['OUTPUT_FOLDER'], verified_filename)
-    if not os.path.exists(workbook_path):
+    workbook_path = materialize_artifact(
+        job_id,
+        'assessor',
+        verified_filename,
+        app.config['OUTPUT_FOLDER'],
+    )
+    if not workbook_path:
         raise FileNotFoundError('Assessor-verified workbook not found')
     leads = pd.read_excel(
         workbook_path,
@@ -813,7 +905,6 @@ def _approved_import_snapshot(job_id):
         .to_dict()
     )
     return {
-        'meta_path': meta_path,
         'meta': meta,
         'verified_filename': verified_filename,
         'approved': approved,
@@ -914,8 +1005,7 @@ def commit_approved_import(job_id):
         snapshot['meta'].get('crm_imported', 0)
     ) + imported
     snapshot['meta']['crm_approval_token'] = snapshot['approval_token']
-    with open(snapshot['meta_path'], 'w') as file_handle:
-        json.dump(snapshot['meta'], file_handle)
+    save_job_meta(snapshot['meta'])
     return jsonify(
         {
             'success': True,
@@ -929,21 +1019,25 @@ def commit_approved_import(job_id):
 
 @app.route('/api/assessor/verify/<job_id>', methods=['POST'])
 def verify_assessor_batch(job_id):
-    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
-    if not os.path.exists(meta_path):
+    meta = load_job_meta(job_id)
+    if not meta:
         return jsonify({'error': 'Processing job not found'}), 404
-    with open(meta_path) as file_handle:
-        meta = json.load(file_handle)
 
     source_output_filename = meta.get(
         'assessor_output_filename',
         meta['output_filename'],
     )
-    workbook_path = os.path.join(
-        app.config['OUTPUT_FOLDER'],
-        source_output_filename,
+    source_kind = (
+        'assessor' if meta.get('assessor_output_filename')
+        else 'qualification'
     )
-    if not os.path.exists(workbook_path):
+    workbook_path = materialize_artifact(
+        job_id,
+        source_kind,
+        source_output_filename,
+        app.config['OUTPUT_FOLDER'],
+    )
+    if not workbook_path:
         return jsonify({'error': 'Qualification workbook not found'}), 404
 
     payload = request.get_json(silent=True) or {}
@@ -1029,8 +1123,8 @@ def verify_assessor_batch(job_id):
         'cache_hits': cache_hits,
         'completed_at': datetime.now().isoformat(),
     }
-    with open(meta_path, 'w') as file_handle:
-        json.dump(meta, file_handle)
+    persist_artifact(job_id, 'assessor', verified_filename, verified_path)
+    save_job_meta(meta)
 
     counts = {}
     for item in results:
@@ -1056,15 +1150,25 @@ def verify_assessor_batch(job_id):
 
 @app.route('/skiptrace/<job_id>', methods=['POST'])
 def skiptrace(job_id):
-    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
-    if not os.path.exists(meta_path):
+    meta = load_job_meta(job_id)
+    if not meta:
         return jsonify({'error': 'Job not found. Please process a list first.'}), 404
 
-    with open(meta_path) as f:
-        meta = json.load(f)
-
-    clean_path = os.path.join(app.config['OUTPUT_FOLDER'], meta['output_filename'])
-    if not os.path.exists(clean_path):
+    source_filename = meta.get(
+        'assessor_output_filename',
+        meta['output_filename'],
+    )
+    source_kind = (
+        'assessor' if meta.get('assessor_output_filename')
+        else 'qualification'
+    )
+    clean_path = materialize_artifact(
+        job_id,
+        source_kind,
+        source_filename,
+        app.config['OUTPUT_FOLDER'],
+    )
+    if not clean_path:
         return jsonify({'error': 'Cleaned file not found.'}), 404
 
     df = pd.read_excel(
@@ -1082,6 +1186,9 @@ def skiptrace(job_id):
     enriched_filename = f'Enriched_Leads_{meta["tax_year"]}_{date_str}_{job_id}.xlsx'
     enriched_path = os.path.join(app.config['OUTPUT_FOLDER'], enriched_filename)
     enriched_df.to_excel(enriched_path, index=False)
+    meta['skiptrace_output_filename'] = enriched_filename
+    persist_artifact(job_id, 'skiptrace', enriched_filename, enriched_path)
+    save_job_meta(meta)
 
     return jsonify({
         'success': True,
@@ -1094,9 +1201,17 @@ def skiptrace(job_id):
 def download(filename):
     safe_name = os.path.basename(filename)
     filepath = os.path.join(app.config['OUTPUT_FOLDER'], safe_name)
-    if not os.path.exists(filepath):
+    if os.path.exists(filepath):
+        return send_file(filepath, as_attachment=True, download_name=safe_name)
+    artifact = get_crm().get_processing_artifact(filename=safe_name)
+    if not artifact:
         return 'File not found', 404
-    return send_file(filepath, as_attachment=True, download_name=safe_name)
+    return send_file(
+        io.BytesIO(artifact['content']),
+        as_attachment=True,
+        download_name=safe_name,
+        mimetype='application/octet-stream',
+    )
 
 
 if __name__ == '__main__':

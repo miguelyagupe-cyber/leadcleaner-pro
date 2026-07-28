@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -84,6 +85,38 @@ class ImportRun(Base):
     tax_year: Mapped[int] = mapped_column(Integer, nullable=False)
     stats_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProcessingJob(Base):
+    __tablename__ = 'processing_jobs'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    meta_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProcessingArtifact(Base):
+    __tablename__ = 'processing_artifacts'
+    __table_args__ = (
+        UniqueConstraint('job_id', 'kind', name='uq_job_artifact_kind'),
+        Index('idx_artifact_filename', 'filename'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        String(100),
+        ForeignKey('processing_jobs.job_id', ondelete='CASCADE'),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Lead(Base):
@@ -292,6 +325,112 @@ class CRMRepository:
         with self.engine.connect() as connection:
             connection.execute(select(1))
         return {'status': 'ok', 'database': self.engine.dialect.name}
+
+    def save_processing_job(self, meta):
+        now = utc_now()
+        payload = json.dumps(meta, default=str)
+        with self.Session.begin() as session:
+            item = session.scalar(
+                select(ProcessingJob).where(
+                    ProcessingJob.job_id == meta['uid']
+                )
+            )
+            if item:
+                item.meta_json = payload
+                item.updated_at = now
+            else:
+                session.add(
+                    ProcessingJob(
+                        job_id=meta['uid'],
+                        meta_json=payload,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+
+    def get_processing_job(self, job_id):
+        with self.Session() as session:
+            item = session.scalar(
+                select(ProcessingJob).where(ProcessingJob.job_id == job_id)
+            )
+            if not item:
+                return None
+            meta = json.loads(item.meta_json)
+            meta['_created_at'] = item.created_at.isoformat()
+            meta['_updated_at'] = item.updated_at.isoformat()
+            return meta
+
+    def list_processing_jobs(self, limit=20):
+        with self.Session() as session:
+            items = session.scalars(
+                select(ProcessingJob)
+                .order_by(ProcessingJob.updated_at.desc())
+                .limit(min(max(int(limit), 1), 100))
+            ).all()
+            result = []
+            for item in items:
+                meta = json.loads(item.meta_json)
+                meta['_created_at'] = item.created_at.isoformat()
+                meta['_updated_at'] = item.updated_at.isoformat()
+                result.append(meta)
+            return result
+
+    def save_processing_artifact(self, job_id, kind, filename, content):
+        import hashlib
+
+        now = utc_now()
+        content = bytes(content)
+        digest = hashlib.sha256(content).hexdigest()
+        with self.Session.begin() as session:
+            item = session.scalar(
+                select(ProcessingArtifact).where(
+                    ProcessingArtifact.job_id == job_id,
+                    ProcessingArtifact.kind == kind,
+                )
+            )
+            values = {
+                'filename': filename,
+                'content': content,
+                'content_sha256': digest,
+                'size_bytes': len(content),
+                'updated_at': now,
+            }
+            if item:
+                for field, value in values.items():
+                    setattr(item, field, value)
+            else:
+                item = ProcessingArtifact(
+                    job_id=job_id,
+                    kind=kind,
+                    created_at=now,
+                    **values,
+                )
+                session.add(item)
+        return {
+            'job_id': job_id,
+            'kind': kind,
+            'filename': filename,
+            'content_sha256': digest,
+            'size_bytes': len(content),
+        }
+
+    def get_processing_artifact(self, job_id=None, kind=None, filename=None):
+        conditions = []
+        if job_id:
+            conditions.append(ProcessingArtifact.job_id == job_id)
+        if kind:
+            conditions.append(ProcessingArtifact.kind == kind)
+        if filename:
+            conditions.append(ProcessingArtifact.filename == filename)
+        if not conditions:
+            return None
+        with self.Session() as session:
+            item = session.scalar(
+                select(ProcessingArtifact)
+                .where(*conditions)
+                .order_by(ProcessingArtifact.updated_at.desc())
+            )
+            return _as_dict(item) if item else None
 
     def get_assessor_verification(self, account_no):
         with self.Session() as session:
