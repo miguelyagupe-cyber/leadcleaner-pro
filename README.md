@@ -158,6 +158,18 @@ Each card connects the current owner and Assessor check with active evidence,
 call count, pipeline stage, and the full lead workspace. Search and stage
 filters operate on the consolidated property list.
 
+## Acquisition intelligence
+
+The Reports workspace turns current CRM facts into an operational acquisition
+brief: active delinquent debt, contact readiness, due and overdue follow-ups,
+evidence-confirmed deceased owners, pipeline distribution, call outcomes, and
+the highest-priority active opportunities.
+
+Recommendations are deterministic responses to recorded gaps such as overdue
+follow-ups, missing contact data, and unresolved research. The report uses the
+latest CRM record per property so repeated imports do not inflate totals, and
+it explicitly avoids estimating revenue, property value, or close probability.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

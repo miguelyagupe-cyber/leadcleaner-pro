@@ -374,6 +374,7 @@ class CRMTest(unittest.TestCase):
         )
 
         properties = self.repository.list_properties()
+        report = self.repository.acquisition_report()
         alpha = next(
             item for item in properties['items']
             if item['tax_id'] == 'A-100'
@@ -384,10 +385,42 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(properties['total'], 2)
         self.assertEqual(alpha['record_count'], 2)
         self.assertEqual(alpha['total_due'], 12500)
+        self.assertEqual(report['summary']['active_debt'], 14800)
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'One property. One source of truth.', page.data)
         self.assertEqual(api['total'], 1)
         self.assertIn('most recently updated record', api['methodology'])
+
+    def test_acquisition_report_uses_recorded_crm_facts(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'probate_case',
+                'outcome': 'supports_deceased',
+                'confidence': 'confirmed',
+                'identity_match': 'exact',
+                'source_name': 'Official probate docket',
+            },
+        )
+
+        report = self.repository.acquisition_report()
+        page = self.client.get('/reports')
+        api = self.client.get('/api/reports/acquisition').get_json()
+
+        self.assertEqual(report['summary']['active_leads'], 2)
+        self.assertEqual(report['summary']['active_debt'], 14800)
+        self.assertEqual(report['summary']['contactable_leads'], 1)
+        self.assertEqual(report['summary']['contact_rate'], 50)
+        self.assertEqual(report['summary']['confirmed_deceased'], 1)
+        self.assertNotIn(
+            'source_data_json',
+            report['top_opportunities'][0],
+        )
+        self.assertIn('does not estimate revenue', report['methodology'])
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Know exactly where to act next.', page.data)
+        self.assertEqual(api['summary']['active_debt'], 14800)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
