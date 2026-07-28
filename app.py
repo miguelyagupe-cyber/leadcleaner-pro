@@ -29,6 +29,7 @@ from crm import (
     EVIDENCE_OUTCOMES,
     EVIDENCE_TYPES,
     IDENTITY_MATCHES,
+    PIPELINE_STAGES,
     RESEARCH_STATUSES,
     CRMRepository,
 )
@@ -927,6 +928,14 @@ def today_page():
     )
 
 
+@app.route('/pipeline')
+def pipeline_page():
+    return render_template(
+        'pipeline.html',
+        pipeline_stages=PIPELINE_STAGES,
+    )
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -959,6 +968,17 @@ def api_leads():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pagination or filter value'}), 400
     return jsonify(result)
+
+
+@app.route('/api/pipeline')
+def api_pipeline():
+    try:
+        board = get_crm().pipeline_board(
+            cards_per_stage=request.args.get('cards_per_stage', 50)
+        )
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid pipeline limit'}), 400
+    return jsonify(board)
 
 
 @app.route('/api/health')

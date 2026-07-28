@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Pipeline · LeadCleaner Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme:dark; --bg:#0a0a0b; --sidebar:#0d0d0f; --surface:#111214; --raised:#16171a; --hover:#1b1c20; --border:#25262b; --soft:#1c1d21; --gold:#c7a251; --gold-bright:#d7b767; --gold-soft:rgba(199,162,81,.11); --text:#f1eee7; --muted:#96979d; --dim:#66676e; --red:#d8665c; --sidebar-width:244px; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); font:14px "DM Sans",system-ui,sans-serif; }
+    button,select { font:inherit; color:inherit; }
+    a { color:inherit; text-decoration:none; }
+    .shell { min-height:100vh; display:grid; grid-template-columns:var(--sidebar-width) minmax(0,1fr); }
+    .sidebar { position:fixed; inset:0 auto 0 0; width:var(--sidebar-width); padding:26px 18px 20px; background:var(--sidebar); border-right:1px solid var(--soft); display:flex; flex-direction:column; z-index:20; }
+    .brand { height:48px; padding:0 10px; display:flex; align-items:center; gap:11px; margin-bottom:24px; }
+    .brand-mark { width:27px; height:27px; display:grid; place-items:center; border:1px solid var(--gold); color:var(--gold); font:17px "Newsreader",serif; transform:rotate(45deg); }
+    .brand-mark span { transform:rotate(-45deg); }
+    .brand-name { font-weight:600; }.brand-name small { display:block; margin-top:1px; color:var(--dim); font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
+    .nav-section { margin-bottom:23px; }.nav-label { padding:0 11px; margin-bottom:7px; color:#55565c; font-size:9px; font-weight:600; letter-spacing:.15em; text-transform:uppercase; }
+    .nav-item { width:100%; min-height:38px; padding:0 11px; border:0; border-radius:5px; background:transparent; color:#85868c; display:flex; align-items:center; gap:11px; cursor:pointer; text-align:left; transition:.16s; }
+    .nav-item:hover { background:var(--raised); color:var(--text); }.nav-item.active { background:var(--gold-soft); color:var(--gold-bright); }.nav-icon { width:16px; text-align:center; }
+    .sidebar-footer { margin-top:auto; border-top:1px solid var(--soft); padding-top:16px; }
+    .user { display:flex; align-items:center; gap:10px; padding:7px 9px; }.avatar { width:30px; height:30px; border-radius:50%; background:#222329; border:1px solid #34353a; display:grid; place-items:center; color:var(--gold); font-size:11px; }
+    .user strong { display:block; font-size:12px; font-weight:500; }.user small { color:var(--dim); font-size:10px; }.logout { margin-left:auto; padding:5px 7px; border:0; background:transparent; color:var(--dim); font-size:10px; cursor:pointer; }
+    main { grid-column:2; min-width:0; }.topbar { height:66px; padding:0 36px; border-bottom:1px solid var(--soft); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; background:rgba(10,10,11,.95); backdrop-filter:blur(12px); z-index:10; }
+    .crumb { color:var(--muted); font-size:12px; }.crumb span { color:#4f5056; margin:0 8px; }.status { color:var(--gold); font-size:10px; }.content { padding:31px 36px 50px; overflow:hidden; }
+    .heading { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:24px; }.eyebrow { color:var(--gold); font-size:9px; font-weight:600; letter-spacing:.17em; text-transform:uppercase; }
+    h1 { margin:8px 0 5px; font:400 34px "Newsreader",serif; }.heading p { margin:0; color:var(--muted); font-size:12px; }.summary { display:flex; gap:26px; padding:12px 16px; border:1px solid var(--border); border-radius:5px; background:var(--surface); }
+    .summary div { min-width:82px; }.summary strong { display:block; font:400 20px "Newsreader",serif; }.summary span { color:var(--dim); font-size:9px; text-transform:uppercase; letter-spacing:.08em; }
+    .board-wrap { width:100%; overflow-x:auto; padding-bottom:16px; scrollbar-color:#33343a transparent; }.board { display:grid; grid-template-columns:repeat(9,285px); align-items:start; gap:12px; min-width:max-content; }
+    .column { min-height:560px; border:1px solid var(--border); border-radius:6px; background:#0e0f11; transition:.15s; }.column.drag-over { border-color:var(--gold); background:rgba(199,162,81,.04); }
+    .column-head { min-height:72px; padding:14px 14px 12px; border-bottom:1px solid var(--soft); position:sticky; top:66px; background:#111214; border-radius:6px 6px 0 0; z-index:2; }
+    .column-title { display:flex; align-items:center; justify-content:space-between; gap:10px; }.column-title strong { font-size:11px; font-weight:600; }.count { min-width:22px; height:20px; padding:0 6px; border:1px solid #34353a; border-radius:10px; color:var(--muted); font-size:9px; display:grid; place-items:center; }
+    .column-debt { margin-top:6px; color:var(--dim); font-size:9px; }.cards { padding:9px; min-height:486px; }
+    .card { margin-bottom:8px; padding:12px; border:1px solid #292a2f; border-radius:5px; background:var(--surface); cursor:grab; transition:.15s; }.card:hover { border-color:#44454b; transform:translateY(-1px); }.card.dragging { opacity:.42; }
+    .card-top { display:flex; justify-content:space-between; gap:10px; }.owner { min-width:0; font-size:11px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.priority { width:7px; height:7px; border-radius:50%; margin-top:4px; background:#65666c; }.priority.urgent { background:var(--red); }.priority.high { background:var(--gold); }.priority.medium { background:#a78f5e; }
+    .address { min-height:28px; margin:5px 0 9px; color:var(--muted); font-size:9px; line-height:1.45; }.card-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:9px; border-top:1px solid var(--soft); color:var(--dim); font-size:9px; }.debt { color:var(--gold-bright); }
+    .follow-up { margin-top:8px; color:#b9a16c; font-size:9px; }.card select { width:100%; height:29px; margin-top:10px; padding:0 7px; border:1px solid #303137; border-radius:4px; background:#0d0e10; color:var(--muted); font-size:9px; }
+    .empty { padding:22px 10px; color:#55565c; font-size:10px; text-align:center; }.toast { position:fixed; right:24px; bottom:24px; padding:12px 15px; border:1px solid #36373d; border-radius:5px; background:#17181b; color:var(--muted); font-size:11px; opacity:0; transform:translateY(8px); transition:.2s; z-index:60; }.toast.show { opacity:1; transform:translateY(0); }
+    @media(max-width:780px){ :root{--sidebar-width:68px}.sidebar{padding:22px 10px}.brand-name,.nav-label,.nav-item span,.user div,.logout{display:none}.brand,.nav-item,.user{justify-content:center}main{grid-column:2}.topbar{padding:0 20px}.content{padding:24px 20px}.heading{align-items:flex-start;flex-direction:column}.summary{width:100%}.board{grid-template-columns:repeat(9,260px)} }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark"><span>L</span></div><div class="brand-name">LeadCleaner Pro<small>Acquisition Intelligence</small></div></div>
+      <nav>
+        <div class="nav-section"><div class="nav-label">Workspace</div><a class="nav-item" href="/"><span class="nav-icon">▦</span><span>Overview</span></a><a class="nav-item" href="/today"><span class="nav-icon">☼</span><span>Today</span></a></div>
+        <div class="nav-section"><div class="nav-label">Intelligence</div><a class="nav-item" href="/leads"><span class="nav-icon">♙</span><span>Leads</span></a><a class="nav-item" href="/research"><span class="nav-icon">⌕</span><span>Research Queue</span></a><a class="nav-item active" href="/pipeline"><span class="nav-icon">☷</span><span>Pipeline</span></a></div>
+        <div class="nav-section"><div class="nav-label">Operations</div><a class="nav-item" href="/"><span class="nav-icon">↓</span><span>Imports</span></a></div>
+      </nav>
+      <div class="sidebar-footer"><div class="user"><div class="avatar">DM</div><div><strong>Daryl Moore</strong><small>Tulsa acquisitions</small></div><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="logout" type="submit">Sign out</button></form></div></div>
+    </aside>
+    <main>
+      <header class="topbar"><div class="crumb">Tulsa County <span>/</span> Pipeline</div><div class="status">Live CRM pipeline</div></header>
+      <div class="content">
+        <section class="heading"><div><div class="eyebrow">Acquisition pipeline</div><h1>Move every opportunity forward.</h1><p>Drag a lead to its next stage or use the stage selector on each card.</p></div><div class="summary"><div><strong id="active-count">—</strong><span>Active leads</span></div><div><strong id="pipeline-debt">—</strong><span>Total debt</span></div><div><strong id="won-count">—</strong><span>Closed</span></div></div></section>
+        <div class="board-wrap"><div class="board" id="pipeline-board"><div class="empty">Loading pipeline…</div></div></div>
+      </div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script>
+    const stages={{ pipeline_stages|tojson }};
+    const csrfToken=document.querySelector('meta[name="csrf-token"]').content;
+    const money=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
+    const number=new Intl.NumberFormat('en-US');
+    const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    const label=value=>String(value||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
+    const dateLabel=value=>{if(!value)return'';const raw=String(value);const parsed=new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw)?`${raw}T12:00:00`:raw);return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(parsed);};
+    let draggedLeadId=null;
+    function toast(message){const element=document.getElementById('toast');element.textContent=message;element.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>element.classList.remove('show'),2200);}
+    function stageOptions(current){return stages.map(stage=>`<option value="${stage}" ${stage===current?'selected':''}>${label(stage)}</option>`).join('');}
+    function card(lead){return `<article class="card" draggable="true" data-lead-id="${lead.id}"><div class="card-top"><div class="owner">${esc(lead.owner_name)}</div><span class="priority ${lead.priority}"></span></div><div class="address">${esc(lead.property_address||'Property address unavailable')}</div><div class="card-meta"><span class="debt">${money.format(lead.total_due||0)} due</span><span>${lead.phone?'Phone ready':'No phone'}</span></div>${lead.next_follow_up?`<div class="follow-up">Follow-up · ${dateLabel(lead.next_follow_up)}</div>`:''}<select class="stage-select" aria-label="Move ${esc(lead.owner_name)} to stage">${stageOptions(lead.status)}</select></article>`;}
+    function renderBoard(data){
+      const active=data.stages.filter(stage=>stage.status!=='closed').reduce((sum,stage)=>sum+stage.count,0);
+      const debt=data.stages.filter(stage=>stage.status!=='closed').reduce((sum,stage)=>sum+stage.total_debt,0);
+      const closed=data.stages.find(stage=>stage.status==='closed')?.count||0;
+      document.getElementById('active-count').textContent=number.format(active);
+      document.getElementById('pipeline-debt').textContent=money.format(debt);
+      document.getElementById('won-count').textContent=number.format(closed);
+      document.getElementById('pipeline-board').innerHTML=data.stages.map(stage=>`<section class="column" data-status="${stage.status}"><header class="column-head"><div class="column-title"><strong>${label(stage.status)}</strong><span class="count">${number.format(stage.count)}</span></div><div class="column-debt">${money.format(stage.total_debt)} delinquent debt</div></header><div class="cards">${stage.items.length?stage.items.map(card).join(''):'<div class="empty">No leads in this stage.</div>'}${stage.count>stage.items.length?`<div class="empty">${number.format(stage.count-stage.items.length)} more leads not shown</div>`:''}</div></section>`).join('');
+      bindBoard();
+    }
+    function bindBoard(){
+      document.querySelectorAll('.card').forEach(item=>{
+        item.addEventListener('dragstart',()=>{draggedLeadId=item.dataset.leadId;item.classList.add('dragging');});
+        item.addEventListener('dragend',()=>{draggedLeadId=null;item.classList.remove('dragging');document.querySelectorAll('.column').forEach(column=>column.classList.remove('drag-over'));});
+        item.addEventListener('click',event=>{if(event.target.tagName!=='SELECT')location.assign(`/leads?lead=${item.dataset.leadId}`);});
+        item.querySelector('.stage-select').addEventListener('change',event=>moveLead(item.dataset.leadId,event.target.value));
+      });
+      document.querySelectorAll('.column').forEach(column=>{
+        column.addEventListener('dragover',event=>{event.preventDefault();column.classList.add('drag-over');});
+        column.addEventListener('dragleave',()=>column.classList.remove('drag-over'));
+        column.addEventListener('drop',event=>{event.preventDefault();column.classList.remove('drag-over');if(draggedLeadId)moveLead(draggedLeadId,column.dataset.status);});
+      });
+    }
+    async function moveLead(leadId,status){
+      const response=await fetch(`/api/leads/${leadId}`,{method:'PATCH',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({status})});
+      const result=await response.json();
+      if(!response.ok){toast(result.error||'Lead could not be moved');return loadBoard();}
+      toast(`Lead moved to ${label(status)}`);await loadBoard();
+    }
+    async function loadBoard(){
+      const response=await fetch('/api/pipeline');const data=await response.json();
+      if(!response.ok){document.getElementById('pipeline-board').innerHTML='<div class="empty">Pipeline unavailable.</div>';return;}
+      renderBoard(data);
+    }
+    loadBoard();
+  </script>
+</body>
+</html>

@@ -319,6 +319,8 @@ class CRMTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Death & probate evidence', response.data)
+        self.assertIn(b'Identity match', response.data)
+        self.assertIn(b'Add evidence', response.data)
 
     def test_today_page_exposes_call_and_follow_up_workspace(self):
         response = self.client.get('/today')
@@ -327,8 +329,34 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Daily calling queue', response.data)
         self.assertIn(b'Log a call', response.data)
         self.assertIn(b'Save call outcome', response.data)
-        self.assertIn(b'Identity match', response.data)
-        self.assertIn(b'Add evidence', response.data)
+
+    def test_pipeline_board_aggregates_stages_and_debt(self):
+        board = self.repository.pipeline_board()
+        stages = {stage['status']: stage for stage in board['stages']}
+
+        self.assertEqual(sum(stage['count'] for stage in board['stages']), 2)
+        self.assertEqual(stages['research_needed']['count'], 1)
+        self.assertEqual(stages['new']['count'], 1)
+        self.assertEqual(
+            sum(stage['total_debt'] for stage in board['stages']),
+            14800,
+        )
+
+    def test_pipeline_page_and_api_move_lead_between_stages(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        page = self.client.get('/pipeline')
+        moved = self.client.patch(
+            f'/api/leads/{lead_id}',
+            json={'status': 'negotiation'},
+        )
+        board = self.client.get('/api/pipeline').get_json()
+        stages = {stage['status']: stage for stage in board['stages']}
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Move every opportunity forward', page.data)
+        self.assertEqual(moved.status_code, 200)
+        self.assertEqual(stages['negotiation']['count'], 1)
+        self.assertEqual(stages['negotiation']['items'][0]['id'], lead_id)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']

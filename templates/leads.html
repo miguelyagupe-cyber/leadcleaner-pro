@@ -158,7 +158,7 @@
           <a class="nav-item {{ 'active' if page_mode == 'leads' else '' }}" href="/leads"><span class="nav-icon">♙</span><span>Leads</span></a>
           <a class="nav-item" href="/leads"><span class="nav-icon">⌂</span><span>Properties</span></a>
           <a class="nav-item {{ 'active' if page_mode == 'research' else '' }}" href="/research"><span class="nav-icon">⌕</span><span>Research Queue</span></a>
-          <a class="nav-item" href="/leads?status=interested"><span class="nav-icon">☷</span><span>Pipeline</span></a>
+          <a class="nav-item" href="/pipeline"><span class="nav-icon">☷</span><span>Pipeline</span></a>
         </div>
         <div class="nav-section">
           <div class="nav-label">Operations</div>
@@ -394,7 +394,7 @@
     $('close-drawer').addEventListener('click',closeDrawer); $('backdrop').addEventListener('click',closeDrawer);
     document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDrawer();});
     const initial=new URLSearchParams(location.search); if(initial.get('status')) $('status-filter').value=initial.get('status');
-    loadLeads();
+    loadLeads().then(()=>{if(initial.get('lead'))openLead(initial.get('lead'));});
   </script>
 </body>
 </html>
