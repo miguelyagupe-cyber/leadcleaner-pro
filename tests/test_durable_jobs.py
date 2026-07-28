@@ -1,4 +1,5 @@
 import os
+import io
 import tempfile
 import unittest
 
@@ -167,6 +168,56 @@ class DurableProcessingJobsTest(unittest.TestCase):
         self.assertEqual(payload['needs_attention'], 0)
         self.assertEqual(payload['jobs'][0]['id'], job_id)
         self.assertTrue(payload['jobs'][0]['download_available'])
+
+    def test_processing_export_includes_auditable_run_summary(self):
+        source = pd.DataFrame([{
+            'Tax ID': 100,
+            'PID': '12345-67-89-00010',
+            'Owner Name': 'DOE, JANE ESTATE',
+            'TotalDue': 6000,
+            'Address': 'PO BOX 12',
+            'OWNR_ADDR 6': 'DALLAS',
+            'OWNR_ADDR ST': 'TX',
+            'ST_NO': 10,
+            'ST_NAME': 'MAIN',
+            'ST_STREET_TYPE': 'ST',
+            'ST_CITY': 'CITY OF TULSA',
+            'Legal Description': 'LT 1 BLK 1 | SAMPLE',
+        }])
+        workbook = io.BytesIO()
+        with pd.ExcelWriter(workbook, engine='openpyxl') as writer:
+            source.to_excel(writer, index=False)
+        workbook.seek(0)
+
+        response = self.client.post(
+            '/process',
+            data={
+                'tax_year': '2023',
+                'file': (workbook, 'tulsa-source.xlsx'),
+            },
+            content_type='multipart/form-data',
+        )
+        payload = response.get_json()
+        output_path = os.path.join(
+            self.output_dir,
+            payload['download_file'],
+        )
+        summary = pd.read_excel(
+            output_path,
+            sheet_name='Run Summary',
+            engine='openpyxl',
+        ).set_index('Control')
+        job = load_job_meta(payload['job_id'])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(summary.loc['Input records', 'Value'], 1)
+        self.assertEqual(summary.loc['Classification reconciled', 'Value'], 'Yes')
+        self.assertIn('source has no row-level', summary.loc['Selected tax year', 'Meaning'])
+        self.assertEqual(len(job['source_sha256']), 64)
+        self.assertEqual(
+            job['qualification_engine'],
+            payload['stats']['engine_version'],
+        )
 
 
 if __name__ == '__main__':

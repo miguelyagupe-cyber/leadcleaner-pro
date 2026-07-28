@@ -4,6 +4,9 @@ from dataclasses import dataclass
 import pandas as pd
 
 
+QUALIFICATION_ENGINE_VERSION = '2026.07-evidence-safe-v2'
+
+
 ENTITY_PATTERNS = (
     r'\bLLC\b',
     r'\bL\.?\s*L\.?\s*C\.?\b',
@@ -406,12 +409,13 @@ def qualify_leads(dataframe, selected_tax_year):
         'review': len(review),
         'excluded': len(excluded),
         'excluded_business_personal_property': int(
-            audit[columns.legal_description]
-            .fillna('')
-            .astype(str)
-            .str.upper()
-            .str.contains('BUSINESS PERSONAL', regex=False)
-            .sum()
+            (audit['Owner Type'] == 'Business personal property').sum()
+        ),
+        'excluded_business_entity': int(
+            (audit['Owner Type'] == 'Business entity').sum()
+        ),
+        'excluded_government_nonprofit': int(
+            (audit['Owner Type'] == 'Government / nonprofit').sum()
         ),
         'review_mobile_home_personal': int(
             (audit['Owner Type'] == 'Mobile home personal property').sum()
@@ -436,8 +440,13 @@ def qualify_leads(dataframe, selected_tax_year):
         ),
         'without_phone': 0,
         'tax_year_row_level_verified': bool(columns.tax_year),
+        'engine_version': QUALIFICATION_ENGINE_VERSION,
     }
     stats['without_phone'] = stats['prequalified'] - stats['with_phone']
+    stats['classification_reconciled'] = (
+        stats['prequalified'] + stats['review'] + stats['excluded']
+        == stats['after_year_filter']
+    )
     return {
         'qualified': qualified,
         'review': review,

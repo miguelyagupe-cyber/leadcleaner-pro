@@ -40,12 +40,12 @@ class DashboardApiTest(unittest.TestCase):
             'output_filename': output_filename,
             'tax_year': 2023,
             'stats': {
-                'final': 1619,
+                'final': 12,
                 'deceased_flagged': 5,
-                'absentee_signal_strong': 68,
-                'absentee_signal_weak': 389,
+                'absentee_signal_strong': 3,
+                'absentee_signal_weak': 4,
                 'with_phone': 0,
-                'without_phone': 1619,
+                'without_phone': 12,
             },
         }
         meta_path = os.path.join(self.temp_dir.name, 'test-job_meta.json')
@@ -57,9 +57,9 @@ class DashboardApiTest(unittest.TestCase):
         payload = self.client.get('/api/dashboard').get_json()
 
         self.assertTrue(payload['has_data'])
-        self.assertEqual(payload['metrics']['actionable_leads'], 1619)
+        self.assertEqual(payload['metrics']['actionable_leads'], 12)
         self.assertEqual(payload['metrics']['deceased_signals'], 5)
-        self.assertEqual(payload['metrics']['research_queue'], 457)
+        self.assertEqual(payload['metrics']['research_queue'], 7)
         self.assertEqual(payload['latest_job']['id'], 'test-job')
         self.assertTrue(payload['latest_job']['download_available'])
 
