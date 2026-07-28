@@ -34,7 +34,13 @@ from crm import (
     CRMRepository,
 )
 from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads
-from assessor import AssessorResult, TulsaAssessorClient, normalize_account_no, verification_decision
+from assessor import (
+    RETRYABLE_STATUSES,
+    AssessorResult,
+    TulsaAssessorClient,
+    normalize_account_no,
+    verification_decision,
+)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
@@ -1653,6 +1659,7 @@ def verify_assessor_batch(job_id):
     results = []
     processed = 0
     cache_hits = 0
+    stop_reason = ''
     for index, row in leads.iterrows():
         if processed >= limit:
             break
@@ -1666,7 +1673,7 @@ def verify_assessor_batch(job_id):
         if not account_no:
             continue
         cached = None if force else repository.get_assessor_verification(account_no)
-        if cached:
+        if cached and cached['status'] not in RETRYABLE_STATUSES:
             cache_hits += 1
             fetched_at = cached['fetched_at']
             if hasattr(fetched_at, 'isoformat'):
@@ -1686,13 +1693,19 @@ def verify_assessor_batch(job_id):
             repository.save_assessor_verification(result)
 
         decision, reason = verification_decision(row.get(owner_column), result)
-        leads.at[index, 'Current Owner Verification'] = decision
         leads.at[index, 'Current Assessor Owner'] = result.current_owner
         leads.at[index, 'Assessor Account Type'] = result.account_type
         leads.at[index, 'Assessor Vacant'] = 'Yes' if result.vacant else 'No'
         leads.at[index, 'Assessor Verification Reason'] = reason
         leads.at[index, 'Assessor Checked At'] = result.fetched_at
         leads.at[index, 'Assessor URL'] = result.source_url
+        if result.status in RETRYABLE_STATUSES:
+            leads.at[index, 'Current Owner Verification'] = 'Not checked'
+            stop_reason = result.error or (
+                f'Assessor returned {result.status}; batch paused'
+            )
+        else:
+            leads.at[index, 'Current Owner Verification'] = decision
         results.append(
             {
                 **result.as_dict(),
@@ -1702,6 +1715,8 @@ def verify_assessor_batch(job_id):
             }
         )
         processed += 1
+        if stop_reason:
+            break
 
     sheets['Prequalified - Verify'] = leads
     verified_filename = f"Assessor_Verified_{meta['output_filename']}"
@@ -1742,6 +1757,7 @@ def verify_assessor_batch(job_id):
             'success': True,
             'processed': processed,
             'cache_hits': cache_hits,
+            'stop_reason': stop_reason,
             'counts': counts,
             'results': results,
             'download_file': verified_filename,

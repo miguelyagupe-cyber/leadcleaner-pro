@@ -3,12 +3,14 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import Mock
 
 import pandas as pd
 
 from app import app
 from assessor import (
     AssessorResult,
+    TulsaAssessorClient,
     normalize_account_no,
     owner_match,
     parse_assessor_page,
@@ -38,6 +40,21 @@ class FakeAssessorClient:
             current_owner='DOE, JANE',
             account_type='Residential',
             vacant=False,
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+class RateLimitedAssessorClient:
+    calls = 0
+
+    def fetch(self, pid):
+        self.__class__.calls += 1
+        account_no = normalize_account_no(pid)
+        return AssessorResult(
+            account_no=account_no,
+            status='rate_limited',
+            source_url=f'https://example.test/{account_no}',
+            error='Tulsa County Assessor rate limit reached; batch paused',
             fetched_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -89,6 +106,32 @@ class AssessorTest(unittest.TestCase):
         )
         decision, _ = verification_decision('DOE, JANE', commercial)
         self.assertEqual(decision, 'Review')
+
+        entity_owner = AssessorResult(
+            **{
+                **result.as_dict(),
+                'current_owner': 'DOE, JANE PROPERTY HOLDINGS LLC',
+            }
+        )
+        decision, reason = verification_decision('DOE, JANE', entity_owner)
+        self.assertEqual(decision, 'Review')
+        self.assertIn('business entity', reason)
+
+    def test_client_classifies_access_failures_without_parsing_them(self):
+        for status_code, expected in (
+            (403, 'blocked'),
+            (429, 'rate_limited'),
+            (503, 'server_error'),
+        ):
+            response = Mock(status_code=status_code, text='')
+            session = Mock()
+            session.headers = {}
+            session.get.return_value = response
+            result = TulsaAssessorClient(
+                session=session,
+                delay_seconds=0,
+            ).fetch('123')
+            self.assertEqual(result.status, expected)
 
     def test_batch_verification_persists_progress_and_reuses_cache(self):
         dataframe = pd.DataFrame(
@@ -152,6 +195,53 @@ class AssessorTest(unittest.TestCase):
                 os.path.join(self.output_dir, second['download_file'])
             )
         )
+
+    def test_retryable_failure_pauses_batch_and_remains_pending(self):
+        dataframe = pd.DataFrame(
+            [
+                {
+                    'PID': '12345-67-89-00001',
+                    'Owner Name': 'DOE, JANE',
+                    'Current Owner Verification': 'Not checked',
+                },
+                {
+                    'PID': '12345-67-89-00002',
+                    'Owner Name': 'SMITH, JOHN',
+                    'Current Owner Verification': 'Not checked',
+                },
+            ]
+        )
+        workbook = os.path.join(self.output_dir, 'paused.xlsx')
+        with pd.ExcelWriter(workbook, engine='openpyxl') as writer:
+            dataframe.to_excel(
+                writer,
+                sheet_name='Prequalified - Verify',
+                index=False,
+            )
+        with open(os.path.join(self.output_dir, 'job-paused_meta.json'), 'w') as file_handle:
+            json.dump(
+                {
+                    'uid': 'job-paused',
+                    'source_filename': 'source.xlsx',
+                    'output_filename': 'paused.xlsx',
+                    'tax_year': 2023,
+                    'stats': {'prequalified': 2},
+                },
+                file_handle,
+            )
+        app.config['ASSESSOR_CLIENT_FACTORY'] = RateLimitedAssessorClient
+        RateLimitedAssessorClient.calls = 0
+
+        payload = self.client.post(
+            '/api/assessor/verify/job-paused',
+            json={'limit': 2},
+        ).get_json()
+
+        self.assertEqual(payload['processed'], 1)
+        self.assertEqual(payload['remaining_estimate'], 2)
+        self.assertIn('rate limit', payload['stop_reason'])
+        self.assertEqual(payload['job']['status'], 'assessor_in_progress')
+        self.assertEqual(RateLimitedAssessorClient.calls, 1)
 
 
 if __name__ == '__main__':
