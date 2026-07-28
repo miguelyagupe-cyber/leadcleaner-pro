@@ -357,7 +357,7 @@ class CRMRepository:
     def _priority(deceased_flag, mailing_signal, total_due):
         if deceased_flag or mailing_signal == 'Strong' or total_due >= 10000:
             return 'high'
-        if mailing_signal == 'Weak' or total_due >= 5000:
+        if mailing_signal or total_due >= 5000:
             return 'medium'
         return 'normal'
 
@@ -415,9 +415,14 @@ class CRMRepository:
                     )
                 except (TypeError, ValueError):
                     total_due = 0
-                deceased_flag = str(
+                deceased_value = str(
                     self._value(row, columns.get('deceased_flag'))
-                ).upper().startswith('YES')
+                ).strip()
+                deceased_flag = (
+                    bool(deceased_value)
+                    and deceased_value.upper()
+                    not in ('NO', 'FALSE', 'NONE', 'NAN')
+                )
                 mailing_signal = str(
                     self._value(row, columns.get('mailing_signal'))
                 ).strip()

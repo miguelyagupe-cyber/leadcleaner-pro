@@ -103,6 +103,19 @@ docket information is not an official record. OK2Explore is useful but only
 indexes Oklahoma deaths at least five years old, so a missing result is never
 treated as evidence that a person is living.
 
+## Approved CRM import
+
+Assessor verification does not write to the CRM automatically. The dashboard
+first produces an approval preview with the exact eligible count and total
+delinquent debt. Only rows marked `Verified candidate` can be committed.
+
+The commit requires the preview's SHA-256 approval token plus the explicit
+confirmation phrase. This prevents a stale preview from approving a changed
+workbook. Review, unresolved, and unchecked rows remain outside the CRM.
+Repeated commits are idempotent: existing source identities are skipped and
+reported instead of duplicated. The current Assessor owner becomes the CRM
+owner while the complete source row remains in the audit JSON.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

@@ -4,6 +4,7 @@ import re
 import os
 import uuid
 import json
+import hashlib
 import requests
 from datetime import datetime
 from crm import (
@@ -759,6 +760,171 @@ def process():
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'
     })
+
+
+def _approved_import_snapshot(job_id):
+    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
+    if not os.path.exists(meta_path):
+        raise FileNotFoundError('Processing job not found')
+    with open(meta_path) as file_handle:
+        meta = json.load(file_handle)
+    verified_filename = meta.get('assessor_output_filename')
+    if not verified_filename:
+        raise ValueError('Assessor verification has not produced an approved workbook')
+    workbook_path = os.path.join(app.config['OUTPUT_FOLDER'], verified_filename)
+    if not os.path.exists(workbook_path):
+        raise FileNotFoundError('Assessor-verified workbook not found')
+    leads = pd.read_excel(
+        workbook_path,
+        sheet_name='Prequalified - Verify',
+        engine='openpyxl',
+    )
+    if 'Current Owner Verification' not in leads:
+        raise ValueError('Current-owner decisions are missing')
+    approved = leads[
+        leads['Current Owner Verification'] == 'Verified candidate'
+    ].copy()
+    tax_id_column = find_column(approved, ['TAX', 'ID'])
+    owner_column = (
+        'Current Assessor Owner'
+        if 'Current Assessor Owner' in approved
+        else find_column(approved, ['OWNER', 'NAME'])
+    )
+    identity_parts = [
+        f"{row.get(tax_id_column, '')}|{row.get(owner_column, '')}"
+        for _, row in approved.iterrows()
+    ]
+    token_payload = (
+        f"{job_id}|{verified_filename}|"
+        + '|'.join(sorted(identity_parts))
+    )
+    approval_token = hashlib.sha256(token_payload.encode()).hexdigest()
+    total_due_column = find_column(approved, ['TOTAL', 'DUE'])
+    total_debt = (
+        float(pd.to_numeric(approved[total_due_column], errors='coerce').fillna(0).sum())
+        if total_due_column
+        else 0
+    )
+    decision_counts = (
+        leads['Current Owner Verification']
+        .fillna('Not checked')
+        .astype(str)
+        .value_counts()
+        .to_dict()
+    )
+    return {
+        'meta_path': meta_path,
+        'meta': meta,
+        'verified_filename': verified_filename,
+        'approved': approved,
+        'approval_token': approval_token,
+        'total_debt': total_debt,
+        'decision_counts': {
+            str(key): int(value) for key, value in decision_counts.items()
+        },
+    }
+
+
+@app.route('/api/import/<job_id>/preview')
+def preview_approved_import(job_id):
+    try:
+        snapshot = _approved_import_snapshot(job_id)
+    except FileNotFoundError as error:
+        return jsonify({'error': str(error)}), 404
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 409
+    return jsonify(
+        {
+            'success': True,
+            'job_id': job_id,
+            'approved_candidates': len(snapshot['approved']),
+            'total_debt': snapshot['total_debt'],
+            'decision_counts': snapshot['decision_counts'],
+            'approval_token': snapshot['approval_token'],
+            'already_committed': bool(
+                snapshot['meta'].get('crm_import_approved_at')
+            ),
+            'previously_imported': int(
+                snapshot['meta'].get('crm_imported', 0)
+            ),
+        }
+    )
+
+
+@app.route('/api/import/<job_id>/commit', methods=['POST'])
+def commit_approved_import(job_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        snapshot = _approved_import_snapshot(job_id)
+    except FileNotFoundError as error:
+        return jsonify({'error': str(error)}), 404
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 409
+    if payload.get('approval_token') != snapshot['approval_token']:
+        return jsonify(
+            {'error': 'Approval preview is stale or was not confirmed'}
+        ), 409
+    if payload.get('confirmation') != 'IMPORT VERIFIED CANDIDATES':
+        return jsonify({'error': 'Explicit import confirmation is required'}), 400
+
+    approved = snapshot['approved']
+    columns = {
+        'tax_id': find_column(approved, ['TAX', 'ID']),
+        'owner_name': (
+            'Current Assessor Owner'
+            if 'Current Assessor Owner' in approved
+            else find_column(approved, ['OWNER', 'NAME'])
+        ),
+        'total_due': find_column(approved, ['TOTAL', 'DUE']),
+        'phone': find_column(approved, ['PHONE']),
+        'mailing_address': find_column(approved, ['ADDRESS']),
+        'mailing_city': find_column(approved, ['OWNR_ADDR', '6']),
+        'mailing_state': find_column(approved, ['OWNR_ADDR', 'ST']),
+        'zip_code': find_column(approved, ['ZIP']),
+        'street_number': find_column(approved, ['ST_NO']),
+        'street_name': find_column(approved, ['ST_NAME']),
+        'street_type': find_column(approved, ['ST_STREET', 'TYPE']),
+        'property_city': find_column(approved, ['ST_CITY']),
+        'deceased_flag': (
+            'Deceased Evidence'
+            if 'Deceased Evidence' in approved
+            else None
+        ),
+        'mailing_signal': (
+            'Absentee Signal' if 'Absentee Signal' in approved else None
+        ),
+    }
+    required = ('tax_id', 'owner_name', 'total_due')
+    if any(not columns[field] for field in required):
+        return jsonify({'error': 'Required CRM import columns are missing'}), 409
+
+    import_job = {
+        'uid': job_id,
+        'source_filename': snapshot['meta']['source_filename'],
+        'output_filename': snapshot['verified_filename'],
+        'tax_year': snapshot['meta']['tax_year'],
+        'stats': {
+            **snapshot['meta'].get('stats', {}),
+            'approved_candidates': len(approved),
+        },
+    }
+    imported = get_crm().import_leads(approved, import_job, columns)
+    snapshot['meta']['crm_import_approved_at'] = datetime.now().isoformat()
+    snapshot['meta']['crm_imported'] = int(
+        snapshot['meta'].get('crm_imported', 0)
+    ) + imported
+    snapshot['meta']['crm_approval_token'] = snapshot['approval_token']
+    with open(snapshot['meta_path'], 'w') as file_handle:
+        json.dump(snapshot['meta'], file_handle)
+    return jsonify(
+        {
+            'success': True,
+            'approved_candidates': len(approved),
+            'imported': imported,
+            'duplicates_skipped': len(approved) - imported,
+            'crm_total': get_crm().dashboard_metrics()['actionable_leads'],
+        }
+    )
 
 
 @app.route('/api/assessor/verify/<job_id>', methods=['POST'])
