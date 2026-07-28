@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -134,6 +135,90 @@ class CRMTest(unittest.TestCase):
         health = self.client.get('/api/health').get_json()
         self.assertEqual(health, {'status': 'ok', 'database': 'sqlite'})
 
+    def test_call_outcome_updates_pipeline_and_creates_follow_up(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        follow_up = (date.today() + timedelta(days=2)).isoformat()
+
+        result = self.repository.log_call(
+            lead_id,
+            {
+                'direction': 'outbound',
+                'outcome': 'spoke_follow_up',
+                'phone_number': '0000000000',
+                'duration_minutes': 7,
+                'notes': 'Fictional owner requested a later conversation.',
+                'next_follow_up': follow_up,
+            },
+        )
+        lead = result['lead']
+
+        self.assertEqual(lead['status'], 'interested')
+        self.assertEqual(lead['next_follow_up'], follow_up)
+        self.assertIsNotNone(lead['last_contacted_at'])
+        self.assertEqual(lead['calls'][0]['outcome'], 'spoke_follow_up')
+        self.assertEqual(lead['calls'][0]['duration_minutes'], 7)
+        self.assertEqual(lead['activity'][0]['activity_type'], 'call_logged')
+
+    def test_follow_up_outcomes_require_a_date(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+
+        with self.assertRaisesRegex(ValueError, 'requires a next follow-up'):
+            self.repository.log_call(
+                lead_id,
+                {'direction': 'outbound', 'outcome': 'no_answer'},
+            )
+
+    def test_call_api_returns_updated_lead(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        response = self.client.post(
+            f'/api/leads/{lead_id}/calls',
+            json={
+                'direction': 'inbound',
+                'outcome': 'appointment_set',
+                'duration_minutes': 12,
+                'next_follow_up': (date.today() + timedelta(days=1)).isoformat(),
+            },
+        )
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload['lead']['status'], 'appointment_scheduled')
+        self.assertEqual(payload['lead']['calls'][0]['direction'], 'inbound')
+
+    def test_not_interested_closes_follow_up_without_deleting_history(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': date.today().isoformat()},
+        )
+
+        result = self.repository.log_call(
+            lead_id,
+            {
+                'direction': 'outbound',
+                'outcome': 'not_interested',
+                'notes': 'Fictional owner declined further contact.',
+            },
+        )
+
+        self.assertEqual(result['lead']['status'], 'disqualified')
+        self.assertIsNone(result['lead']['next_follow_up'])
+        self.assertEqual(len(result['lead']['calls']), 1)
+
+    def test_today_queue_contains_due_active_follow_ups(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': date.today().isoformat()},
+        )
+
+        due = self.repository.list_leads(follow_up='due')
+        metrics = self.repository.dashboard_metrics()
+
+        self.assertEqual(due['total'], 1)
+        self.assertEqual(due['items'][0]['id'], lead_id)
+        self.assertEqual(metrics['follow_ups_due'], 1)
+
     def test_exact_confirmed_official_evidence_confirms_deceased(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
         response = self.client.post(
@@ -234,6 +319,14 @@ class CRMTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Death & probate evidence', response.data)
+
+    def test_today_page_exposes_call_and_follow_up_workspace(self):
+        response = self.client.get('/today')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Daily calling queue', response.data)
+        self.assertIn(b'Log a call', response.data)
+        self.assertIn(b'Save call outcome', response.data)
         self.assertIn(b'Identity match', response.data)
         self.assertIn(b'Add evidence', response.data)
 
