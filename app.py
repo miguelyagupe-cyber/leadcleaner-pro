@@ -936,6 +936,14 @@ def pipeline_page():
     )
 
 
+@app.route('/properties')
+def properties_page():
+    return render_template(
+        'properties.html',
+        statuses=CRM_STATUSES,
+    )
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -979,6 +987,20 @@ def api_pipeline():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pipeline limit'}), 400
     return jsonify(board)
+
+
+@app.route('/api/properties')
+def api_properties():
+    try:
+        result = get_crm().list_properties(
+            search=request.args.get('q', '').strip(),
+            status=request.args.get('status', '').strip(),
+            page=request.args.get('page', 1),
+            per_page=request.args.get('per_page', 24),
+        )
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid pagination or filter value'}), 400
+    return jsonify(result)
 
 
 @app.route('/api/health')

@@ -1150,3 +1150,112 @@ class CRMRepository:
             'cards_per_stage': cards_per_stage,
             'generated_at': utc_now().isoformat(),
         }
+
+    def list_properties(self, search='', status='', page=1, per_page=24):
+        """Return one current workspace card per property identity.
+
+        County files can contain the same parcel in more than one import. The
+        newest lead is the operational record; older rows remain available as
+        source history and are never added together as if they were new debt.
+        """
+        if status and status not in CRM_STATUSES:
+            raise ValueError('Invalid status')
+        page = max(int(page), 1)
+        per_page = min(max(int(per_page), 1), 100)
+        needle = str(search or '').strip().lower()
+
+        with self.Session() as session:
+            leads = session.scalars(
+                select(Lead).order_by(Lead.updated_at.desc(), Lead.id.desc())
+            ).all()
+            evidence_counts = dict(
+                session.execute(
+                    select(
+                        ResearchEvidence.lead_id,
+                        func.count(ResearchEvidence.id),
+                    )
+                    .where(ResearchEvidence.retracted_at.is_(None))
+                    .group_by(ResearchEvidence.lead_id)
+                ).all()
+            )
+            call_counts = dict(
+                session.execute(
+                    select(CallLog.lead_id, func.count(CallLog.id))
+                    .group_by(CallLog.lead_id)
+                ).all()
+            )
+            assessor = {
+                row.account_no.strip().upper(): _as_dict(row)
+                for row in session.scalars(select(AssessorVerification)).all()
+            }
+
+        grouped = {}
+        for lead in leads:
+            identity = (
+                f"tax:{lead.tax_id.strip().upper()}"
+                if lead.tax_id and lead.tax_id.strip()
+                else (
+                    f"address:{(lead.property_address or '').strip().upper()}|"
+                    f"{(lead.property_city or '').strip().upper()}"
+                )
+            )
+            if identity not in grouped:
+                lead_data = _as_dict(lead)
+                lead_data.pop('source_data_json', None)
+                grouped[identity] = {
+                    **lead_data,
+                    'lead_id': lead.id,
+                    'record_count': 0,
+                    'tax_years': [],
+                    'evidence_count': 0,
+                    'call_count': 0,
+                    'assessor_verification': assessor.get(
+                        (lead.tax_id or '').strip().upper()
+                    ),
+                }
+            item = grouped[identity]
+            item['record_count'] += 1
+            item['evidence_count'] += evidence_counts.get(lead.id, 0)
+            item['call_count'] += call_counts.get(lead.id, 0)
+            if lead.tax_year not in item['tax_years']:
+                item['tax_years'].append(lead.tax_year)
+
+        items = []
+        for item in grouped.values():
+            item['tax_years'].sort(reverse=True)
+            haystack = ' '.join(
+                str(item.get(field) or '').lower()
+                for field in (
+                    'owner_name',
+                    'property_address',
+                    'property_city',
+                    'tax_id',
+                )
+            )
+            if needle and needle not in haystack:
+                continue
+            if status and item['status'] != status:
+                continue
+            items.append(item)
+
+        priority_rank = {'urgent': 0, 'high': 1, 'medium': 2, 'normal': 3}
+        items.sort(
+            key=lambda item: (
+                priority_rank.get(item['priority'], 9),
+                -float(item['total_due'] or 0),
+                -item['lead_id'],
+            )
+        )
+        total = len(items)
+        offset = (page - 1) * per_page
+        return {
+            'items': items[offset:offset + per_page],
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'pages': max((total + per_page - 1) // per_page, 1),
+            'methodology': (
+                'One card per Tax ID (or property address when Tax ID is '
+                'missing). Values come from the most recently updated record.'
+            ),
+        }
