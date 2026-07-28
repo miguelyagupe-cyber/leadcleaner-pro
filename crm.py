@@ -144,6 +144,21 @@ class LeadActivity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AssessorVerification(Base):
+    __tablename__ = 'assessor_verifications'
+    __table_args__ = (Index('idx_assessor_status', 'status'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_no: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    current_owner: Mapped[str | None] = mapped_column(Text)
+    account_type: Mapped[str | None] = mapped_column(String(80))
+    vacant: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def _as_dict(instance):
     return {
         column.name: getattr(instance, column.name)
@@ -173,6 +188,45 @@ class CRMRepository:
         with self.engine.connect() as connection:
             connection.execute(select(1))
         return {'status': 'ok', 'database': self.engine.dialect.name}
+
+    def get_assessor_verification(self, account_no):
+        with self.Session() as session:
+            item = session.scalar(
+                select(AssessorVerification).where(
+                    AssessorVerification.account_no == account_no
+                )
+            )
+            return _as_dict(item) if item else None
+
+    def save_assessor_verification(self, result):
+        fetched_at = datetime.fromisoformat(result.fetched_at)
+        with self.Session.begin() as session:
+            item = session.scalar(
+                select(AssessorVerification).where(
+                    AssessorVerification.account_no == result.account_no
+                )
+            )
+            values = {
+                'status': result.status,
+                'current_owner': result.current_owner,
+                'account_type': result.account_type,
+                'vacant': result.vacant,
+                'source_url': result.source_url,
+                'error': result.error,
+                'fetched_at': fetched_at,
+            }
+            if item:
+                for field, value in values.items():
+                    setattr(item, field, value)
+            else:
+                item = AssessorVerification(
+                    account_no=result.account_no,
+                    **values,
+                )
+                session.add(item)
+            session.flush()
+            record = _as_dict(item)
+        return record
 
     @staticmethod
     def _value(row, column, default=''):
