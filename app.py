@@ -33,7 +33,7 @@ from crm import (
     RESEARCH_STATUSES,
     CRMRepository,
 )
-from qualification import qualify_leads
+from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads
 from assessor import AssessorResult, TulsaAssessorClient, normalize_account_no, verification_decision
 
 app = Flask(__name__)
@@ -486,6 +486,76 @@ def save_excel_formatted(sheets: dict, output_path):
                 ws.column_dimensions[get_column_letter(i)].width = min(max(max_len + 2, 10), 45)
 
             ws.row_dimensions[1].height = 20
+
+
+def qualification_run_summary(source_filename, source_sha256, tax_year, stats):
+    year_note = (
+        'Verified from a row-level source column.'
+        if stats.get('tax_year_row_level_verified')
+        else (
+            'Recorded as import provenance only; this source has no row-level '
+            'tax-year column.'
+        )
+    )
+    rows = [
+        ('Source file', source_filename, 'Uploaded county list'),
+        ('Source SHA-256', source_sha256, 'Exact source-file fingerprint'),
+        ('Qualification engine', QUALIFICATION_ENGINE_VERSION, 'Ruleset used for this run'),
+        ('Selected tax year', tax_year, year_note),
+        ('Input records', stats.get('original', 0), 'Rows read from the source'),
+        (
+            'Rows evaluated',
+            stats.get('after_year_filter', 0),
+            'Rows evaluated after any verifiable year filter',
+        ),
+        (
+            'Prequalified — verify',
+            stats.get('prequalified', 0),
+            'Candidates retained pending current-owner verification',
+        ),
+        (
+            'Needs review',
+            stats.get('review', 0),
+            'Human acquisition-rule or data-quality decision required',
+        ),
+        ('Excluded', stats.get('excluded', 0), 'Removed with a row-level reason'),
+        (
+            'Business personal property',
+            stats.get('excluded_business_personal_property', 0),
+            'Excluded by county legal-description evidence',
+        ),
+        (
+            'Cannabis businesses',
+            stats.get('excluded_cannabis', 0),
+            'Excluded by owner-name business signal',
+        ),
+        (
+            'Other business entities',
+            stats.get('excluded_business_entity', 0),
+            'Excluded by owner-name entity signal',
+        ),
+        (
+            'Government / nonprofit',
+            stats.get('excluded_government_nonprofit', 0),
+            'Excluded by owner-name organization signal',
+        ),
+        (
+            'Deceased text signals',
+            stats.get('deceased_text_signals', 0),
+            'Research leads only; no death is confirmed by county text',
+        ),
+        (
+            'Confirmed deceased',
+            stats.get('deceased_confirmed', 0),
+            'Requires separate identity-matched evidence',
+        ),
+        (
+            'Classification reconciled',
+            'Yes' if stats.get('classification_reconciled') else 'No',
+            'Prequalified + review + excluded equals rows evaluated',
+        ),
+    ]
+    return pd.DataFrame(rows, columns=['Control', 'Value', 'Meaning'])
 
 
 def compute_absentee_signal(df, mail_addr_col, mail_city_col, prop_city_col):
@@ -1270,9 +1340,13 @@ def process():
     uid = str(uuid.uuid4())[:8]
     upload_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{uid}_input{ext}')
     file.save(upload_path)
+    with open(upload_path, 'rb') as source_file:
+        source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
     job_meta = {
         'uid': uid,
         'source_filename': file.filename,
+        'source_sha256': source_sha256,
+        'qualification_engine': QUALIFICATION_ENGINE_VERSION,
         'tax_year': tax_year,
         'stats': {},
         'status': 'uploaded',
@@ -1293,7 +1367,6 @@ def process():
 
     try:
         qualification = qualify_leads(df, tax_year)
-        cleaned_df = qualification['qualified']
         stats = qualification['stats']
     except Exception as e:
         job_meta['status'] = 'failed'
@@ -1308,6 +1381,12 @@ def process():
 
     save_excel_formatted(
         {
+            'Run Summary': qualification_run_summary(
+                file.filename,
+                source_sha256,
+                tax_year,
+                stats,
+            ),
             'Prequalified - Verify': qualification['qualified'],
             'Needs Review': qualification['review'],
             'Deceased Research': qualification['deceased'],

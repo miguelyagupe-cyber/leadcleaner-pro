@@ -142,6 +142,20 @@ class QualificationEngineTest(unittest.TestCase):
             result['audit'].iloc[0]['Tax Year Provenance'],
         )
 
+    def test_exclusion_counts_are_mutually_exclusive_and_reconcile(self):
+        result = qualify_leads(self.dataframe, 2023)
+        stats = result['stats']
+
+        self.assertEqual(stats['excluded_business_personal_property'], 1)
+        self.assertEqual(stats['excluded_cannabis'], 0)
+        self.assertEqual(stats['excluded_business_entity'], 0)
+        self.assertEqual(stats['excluded_government_nonprofit'], 0)
+        self.assertTrue(stats['classification_reconciled'])
+        self.assertEqual(
+            stats['prequalified'] + stats['review'] + stats['excluded'],
+            stats['after_year_filter'],
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
