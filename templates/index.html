@@ -445,7 +445,7 @@
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'The list could not be processed.');
         setProgress(100, 'Processing complete');
-        $('result-copy').textContent = `${nf.format(result.stats.qualified || result.stats.final || 0)} qualified leads · ${nf.format(result.stats.review || 0)} need review · ${nf.format(result.stats.excluded || 0)} excluded with reasons. Nothing is committed to the CRM until approved.`;
+        $('result-copy').textContent = `${nf.format(result.stats.prequalified || result.stats.final || 0)} prequalified records · current-owner verification required · ${nf.format(result.stats.review || 0)} need rule review · ${nf.format(result.stats.excluded || 0)} excluded with reasons. Nothing is committed to the CRM until approved.`;
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
         $('result-box').style.display = 'block';
         setTimeout(loadDashboard, 300);

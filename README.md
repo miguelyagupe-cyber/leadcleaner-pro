@@ -43,12 +43,12 @@ Open browser → **http://localhost:5000**
 ## What the tool does automatically
 
 - ✅ Keeps only leads from the selected tax year
-- ✅ Separates qualified, review, and excluded records with a reason on every row
-- ✅ Identifies Tulsa business personal property from the county Tax ID series
+- ✅ Separates prequalified, review, and excluded records with a reason on every row
+- ✅ Identifies Tulsa business personal property from the county legal description
 - ✅ Removes LLCs, corporations, cannabis businesses, government, and nonprofits
 - ✅ Keeps TRUST / TRUSTEE names (family trusts are valid leads)
 - ✅ Sorts by Total Due (highest debt first = most motivated sellers)
-- ✅ Scores qualified leads without treating absentee status as proof of death
+- ✅ Produces preliminary scores without treating absentee or estate text as proof of death
 - ✅ Separates deceased evidence, absentee opportunities, and data-quality review
 - ✅ Shows exactly how many records were excluded and why
 - ✅ Holds qualification runs for review before any CRM import
@@ -59,7 +59,7 @@ Open browser → **http://localhost:5000**
 
 Every processing run creates five auditable sheets:
 
-- `Qualified Leads`
+- `Prequalified - Verify`
 - `Needs Review`
 - `Deceased Research`
 - `Absentee Opportunities`

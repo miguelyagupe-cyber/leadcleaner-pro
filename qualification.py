@@ -79,13 +79,30 @@ CANNABIS_PATTERNS = (
 )
 
 DECEASED_PATTERNS = (
-    (r'\bPR\s+OF\s+THE\s+ESTATE\b', 'Probate representative named'),
-    (r'\bPERSONAL\s+REP(?:RESENTATIVE)?\b', 'Personal representative named'),
-    (r'\bESTATE\s+OF\b', 'Estate of owner'),
-    (r'\bHEIRS?\s+OF\b', 'Heirs of owner'),
-    (r'\bDECEASED\b', 'Owner marked deceased'),
-    (r'\bEXECUTOR\b', 'Executor named'),
-    (r'\bESTATE\b', 'Estate notation in owner name'),
+    (
+        r'\bPR\s+OF\s+THE\s+ESTATE\b',
+        'Probate representative named',
+        'Representative named - owner may be living',
+    ),
+    (
+        r'\bPERSONAL\s+REP(?:RESENTATIVE)?\b',
+        'Personal representative named',
+        'Representative named - owner may be living',
+    ),
+    (
+        r'\bEXECUTOR\b',
+        'Executor named',
+        'Representative named - owner may be living',
+    ),
+    (
+        r'\bL(?:IFE|F)\s+ESTATE\b',
+        'Life estate notation',
+        'Life estate - not death evidence by itself',
+    ),
+    (r'\bESTATE\s+OF\b', 'Estate of owner', 'Unresolved - death/probate record required'),
+    (r'\bHEIRS?\s+OF\b', 'Heirs of owner', 'Unresolved - death/probate record required'),
+    (r'\bDECEASED\b', 'Owner marked deceased', 'Unresolved - death/probate record required'),
+    (r'\bESTATE\b', 'Estate notation in owner name', 'Unresolved - death/probate record required'),
 )
 
 
@@ -111,10 +128,18 @@ def _deceased_evidence(owner_name):
     text = _text(owner_name).upper()
     if 'REAL ESTATE' in text:
         return '', 'None'
-    for pattern, evidence in DECEASED_PATTERNS:
+    for pattern, evidence, research_status in DECEASED_PATTERNS:
         if re.search(pattern, text):
-            return evidence, 'High'
-    return '', 'None'
+            return evidence, research_status
+    return '', 'No text signal'
+
+
+def _assessor_url(row, columns):
+    pid_column = _find_column(pd.DataFrame([row]), 'PID')
+    pid = re.sub(r'[^A-Z0-9]', '', _text(row.get(pid_column)).upper())
+    if not pid:
+        return ''
+    return f'https://assessor.tulsacounty.org/Property/Info?accountNo=R{pid}'
 
 
 def _mailing_signal(row, columns):
@@ -203,7 +228,7 @@ def resolve_columns(dataframe):
     )
 
 
-def _score(total_due, deceased_confidence, absentee_signal, owner_type, issues):
+def _score(total_due, deceased_status, absentee_signal, owner_type, issues):
     score = 40
     if total_due >= 10000:
         score += 30
@@ -213,8 +238,8 @@ def _score(total_due, deceased_confidence, absentee_signal, owner_type, issues):
         score += 14
     elif total_due >= 2000:
         score += 7
-    if deceased_confidence == 'High':
-        score += 25
+    if deceased_status.startswith('Unresolved'):
+        score += 10
     if 'Out of state' in absentee_signal:
         score += 8
     if 'Different mailing city' in absentee_signal:
@@ -243,24 +268,22 @@ def qualify_leads(dataframe, selected_tax_year):
     for _, row in working.iterrows():
         owner_name = _text(row.get(columns.owner_name))
         owner_upper = owner_name.upper()
-        tax_id_text = _text(row.get(columns.tax_id))
-        try:
-            tax_id_number = int(float(tax_id_text))
-        except ValueError:
-            tax_id_number = 0
         try:
             total_due = float(row.get(columns.total_due))
         except (TypeError, ValueError):
             total_due = 0
 
-        business_personal_property = 6000000 <= tax_id_number <= 6999999
+        legal_description = _text(row.get(columns.legal_description)).upper()
+        business_personal_property = 'BUSINESS PERSONAL' in legal_description
+        mobile_home_personal = 'MOBILE HOME PERSONAL' in legal_description
+        farm_personal = 'FARM PERSONAL' in legal_description
         cannabis = _matches(owner_upper, CANNABIS_PATTERNS)
         government_nonprofit = _matches(
             owner_upper, GOVERNMENT_NONPROFIT_PATTERNS
         ) and not re.match(r'^CHURCH\s*,', owner_upper)
         trust = bool(re.search(r'\bTRUST(?:EE)?\b', owner_upper))
         entity = _matches(owner_upper, ENTITY_PATTERNS)
-        deceased_evidence, deceased_confidence = _deceased_evidence(owner_name)
+        deceased_evidence, deceased_status = _deceased_evidence(owner_name)
         absentee_signal = _mailing_signal(row, columns)
         property_address = _property_address(row, columns)
 
@@ -269,7 +292,22 @@ def qualify_leads(dataframe, selected_tax_year):
             decision, reason = 'Excluded', 'Cannabis-related business'
         elif business_personal_property:
             owner_type = 'Business personal property'
-            decision, reason = 'Excluded', 'Tax ID series 6 identifies business personal property'
+            decision, reason = (
+                'Excluded',
+                'County legal description identifies BUSINESS PERSONAL property',
+            )
+        elif mobile_home_personal:
+            owner_type = 'Mobile home personal property'
+            decision, reason = (
+                'Review',
+                'Mobile-home personal property requires acquisition-rule confirmation',
+            )
+        elif farm_personal:
+            owner_type = 'Farm personal property'
+            decision, reason = (
+                'Review',
+                'Farm personal property requires acquisition-rule confirmation',
+            )
         elif government_nonprofit:
             owner_type = 'Government / nonprofit'
             decision, reason = 'Excluded', 'Government or nonprofit owner'
@@ -278,10 +316,13 @@ def qualify_leads(dataframe, selected_tax_year):
             decision, reason = 'Excluded', 'Business entity in owner name'
         elif trust:
             owner_type = 'Trust'
-            decision, reason = 'Qualified', 'Trust retained under acquisition rules'
+            decision, reason = 'Prequalified', 'Trust retained pending current-owner verification'
         else:
             owner_type = 'Individual / joint owners'
-            decision, reason = 'Qualified', 'Individual owner with delinquent balance'
+            decision, reason = (
+                'Prequalified',
+                'Individual owner retained pending current-owner verification',
+            )
 
         issues = []
         if not owner_name:
@@ -294,13 +335,13 @@ def qualify_leads(dataframe, selected_tax_year):
             issues.append('Incomplete property location')
         if total_due <= 0:
             issues.append('Invalid debt amount')
-        if decision == 'Qualified' and issues:
+        if decision == 'Prequalified' and issues:
             decision = 'Review'
             reason = '; '.join(issues)
 
         lead_score = _score(
             total_due,
-            deceased_confidence,
+            deceased_status,
             absentee_signal,
             owner_type,
             issues,
@@ -325,22 +366,28 @@ def qualify_leads(dataframe, selected_tax_year):
                 'Owner Type': owner_type,
                 'Lead Score': lead_score,
                 'Lead Tier': tier,
-                'Deceased Confidence': deceased_confidence,
+                'Deceased Research Status': deceased_status,
                 'Deceased Evidence': deceased_evidence,
+                'Probate Confirmed': False,
                 'Absentee Signal': absentee_signal,
                 'Data Quality Issues': '; '.join(issues),
                 'Property Address (Normalized)': property_address,
                 'Owner Portfolio Count': int(owner_counts.get(owner_name, 1)),
                 'Tax Year Provenance': year_validation,
+                'Current Owner Verification': 'Not checked',
+                'Assessor URL': _assessor_url(row, columns),
+                'Score Status': (
+                    'Preliminary - current owner and property type not verified'
+                ),
             }
         )
         records.append(enriched)
 
     audit = pd.DataFrame(records)
-    qualified = audit[audit['Pipeline Decision'] == 'Qualified'].copy()
+    qualified = audit[audit['Pipeline Decision'] == 'Prequalified'].copy()
     review = audit[audit['Pipeline Decision'] == 'Review'].copy()
     excluded = audit[audit['Pipeline Decision'] == 'Excluded'].copy()
-    deceased = audit[audit['Deceased Confidence'] == 'High'].copy()
+    deceased = audit[audit['Deceased Evidence'] != ''].copy()
     absentee = audit[
         (audit['Pipeline Decision'] != 'Excluded') & (audit['Absentee Signal'] != '')
     ].copy()
@@ -354,16 +401,28 @@ def qualify_leads(dataframe, selected_tax_year):
     stats = {
         'original': input_rows,
         'after_year_filter': len(working),
-        'qualified': len(qualified),
+        'prequalified': len(qualified),
+        'qualified': 0,
         'review': len(review),
         'excluded': len(excluded),
         'excluded_business_personal_property': int(
-            pd.to_numeric(audit[columns.tax_id], errors='coerce')
-            .between(6000000, 6999999)
+            audit[columns.legal_description]
+            .fillna('')
+            .astype(str)
+            .str.upper()
+            .str.contains('BUSINESS PERSONAL', regex=False)
             .sum()
         ),
+        'review_mobile_home_personal': int(
+            (audit['Owner Type'] == 'Mobile home personal property').sum()
+        ),
+        'review_farm_personal': int(
+            (audit['Owner Type'] == 'Farm personal property').sum()
+        ),
         'excluded_cannabis': int((audit['Owner Type'] == 'Cannabis business').sum()),
-        'deceased_high_confidence': len(deceased),
+        'deceased_text_signals': len(deceased),
+        'deceased_confirmed': 0,
+        'deceased_high_confidence': 0,
         'absentee_opportunities': len(absentee),
         'tier_a': int((qualified['Lead Tier'] == 'A').sum()),
         'tier_b': int((qualified['Lead Tier'] == 'B').sum()),
@@ -378,7 +437,7 @@ def qualify_leads(dataframe, selected_tax_year):
         'without_phone': 0,
         'tax_year_row_level_verified': bool(columns.tax_year),
     }
-    stats['without_phone'] = stats['qualified'] - stats['with_phone']
+    stats['without_phone'] = stats['prequalified'] - stats['with_phone']
     return {
         'qualified': qualified,
         'review': review,

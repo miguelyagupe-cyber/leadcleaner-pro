@@ -680,7 +680,7 @@ def process():
 
     save_excel_formatted(
         {
-            'Qualified Leads': qualification['qualified'],
+            'Prequalified - Verify': qualification['qualified'],
             'Needs Review': qualification['review'],
             'Deceased Research': qualification['deceased'],
             'Absentee Opportunities': qualification['absentee'],
@@ -728,7 +728,11 @@ def skiptrace(job_id):
     if not os.path.exists(clean_path):
         return jsonify({'error': 'Cleaned file not found.'}), 404
 
-    df = pd.read_excel(clean_path, engine='openpyxl', sheet_name='All Leads')
+    df = pd.read_excel(
+        clean_path,
+        engine='openpyxl',
+        sheet_name='Prequalified - Verify',
+    )
 
     enriched_df, trace_stats = run_skip_tracing(df)
 
