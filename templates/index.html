@@ -363,7 +363,7 @@
         <div class="field"><label for="tax-year">Target tax year</label><input type="number" id="tax-year" value="2023" min="2000" max="2099"></div>
         <div class="progress" id="progress"><div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div><div class="progress-label" id="progress-label">Preparing import…</div></div>
         <div class="error" id="error-box"></div>
-        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download clean workbook</a></div>
+        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download qualification workbook</a><button class="secondary-button" id="verify-assessor" type="button">Verify 25 current owners</button></div><p id="verification-result" class="muted"></p></div>
         <div class="modal-actions" id="modal-actions"><button class="secondary-button" id="cancel-import">Cancel</button><button class="primary-button" id="process-button" disabled>Process list</button></div>
       </div>
     </div>
@@ -377,6 +377,7 @@
     const dropZone = $('drop-zone');
     const processButton = $('process-button');
     const nf = new Intl.NumberFormat('en-US');
+    let currentJobId = null;
 
     function showToast(message) {
       const toast = $('toast');
@@ -447,6 +448,9 @@
         setProgress(100, 'Processing complete');
         $('result-copy').textContent = `${nf.format(result.stats.prequalified || result.stats.final || 0)} prequalified records · current-owner verification required · ${nf.format(result.stats.review || 0)} need rule review · ${nf.format(result.stats.excluded || 0)} excluded with reasons. Nothing is committed to the CRM until approved.`;
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
+        currentJobId = result.job_id;
+        $('verify-assessor').disabled = false;
+        $('verification-result').textContent = 'Assessor verification has not started.';
         $('result-box').style.display = 'block';
         setTimeout(loadDashboard, 300);
       } catch (error) {
@@ -458,6 +462,36 @@
       }
     }
     processButton.addEventListener('click', processList);
+
+    async function verifyAssessorBatch() {
+      if (!currentJobId) return;
+      const button = $('verify-assessor');
+      button.disabled = true;
+      button.textContent = 'Verifying official records…';
+      $('verification-result').textContent = 'Checking a rate-limited batch against Tulsa County Assessor. Progress is cached.';
+      try {
+        const response = await fetch(`/api/assessor/verify/${encodeURIComponent(currentJobId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit: 25 })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Assessor verification failed.');
+        const verified = result.counts['Verified candidate'] || 0;
+        const review = result.counts.Review || 0;
+        const unresolved = result.counts['Not verified'] || 0;
+        $('verification-result').textContent = `${nf.format(result.processed)} checked · ${nf.format(verified)} verified candidates · ${nf.format(review)} require review · ${nf.format(unresolved)} unresolved · ${nf.format(result.remaining_estimate)} remaining.`;
+        $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
+        $('download-result').textContent = 'Download Assessor-verified workbook';
+        button.textContent = result.remaining_estimate ? 'Verify next 25 owners' : 'Assessor verification complete';
+        button.disabled = !result.remaining_estimate;
+      } catch (error) {
+        $('verification-result').textContent = error.message;
+        button.textContent = 'Retry Assessor verification';
+        button.disabled = false;
+      }
+    }
+    $('verify-assessor').addEventListener('click', verifyAssessorBatch);
 
     function attentionIcon(type) {
       if (type === 'deceased') return '✓';

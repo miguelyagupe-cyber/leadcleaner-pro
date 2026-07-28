@@ -13,12 +13,15 @@ from crm import (
     CRMRepository,
 )
 from qualification import qualify_leads
+from assessor import AssessorResult, TulsaAssessorClient, normalize_account_no, verification_decision
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
+app.config['ASSESSOR_BATCH_LIMIT'] = 25
+app.config['ASSESSOR_CLIENT_FACTORY'] = TulsaAssessorClient
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -713,6 +716,133 @@ def process():
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'
     })
+
+
+@app.route('/api/assessor/verify/<job_id>', methods=['POST'])
+def verify_assessor_batch(job_id):
+    meta_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{job_id}_meta.json')
+    if not os.path.exists(meta_path):
+        return jsonify({'error': 'Processing job not found'}), 404
+    with open(meta_path) as file_handle:
+        meta = json.load(file_handle)
+
+    source_output_filename = meta.get(
+        'assessor_output_filename',
+        meta['output_filename'],
+    )
+    workbook_path = os.path.join(
+        app.config['OUTPUT_FOLDER'],
+        source_output_filename,
+    )
+    if not os.path.exists(workbook_path):
+        return jsonify({'error': 'Qualification workbook not found'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    configured_limit = int(app.config.get('ASSESSOR_BATCH_LIMIT', 25))
+    try:
+        requested_limit = int(payload.get('limit', configured_limit))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Batch limit must be a number'}), 400
+    limit = min(max(requested_limit, 1), configured_limit)
+    force = bool(payload.get('force', False))
+
+    sheets = pd.read_excel(workbook_path, sheet_name=None, engine='openpyxl')
+    leads = sheets.get('Prequalified - Verify')
+    if leads is None:
+        return jsonify({'error': 'Prequalified sheet not found'}), 409
+    pid_column = find_column(leads, ['PID'])
+    owner_column = find_column(leads, ['OWNER', 'NAME'])
+    if not pid_column or not owner_column:
+        return jsonify({'error': 'PID or owner column not found'}), 409
+
+    repository = get_crm()
+    client = app.config['ASSESSOR_CLIENT_FACTORY']()
+    results = []
+    processed = 0
+    cache_hits = 0
+    for index, row in leads.iterrows():
+        if processed >= limit:
+            break
+        if str(row.get('Current Owner Verification', '')).strip() not in (
+            '',
+            'Not checked',
+            'nan',
+        ):
+            continue
+        account_no = normalize_account_no(row.get(pid_column))
+        if not account_no:
+            continue
+        cached = None if force else repository.get_assessor_verification(account_no)
+        if cached:
+            cache_hits += 1
+            fetched_at = cached['fetched_at']
+            if hasattr(fetched_at, 'isoformat'):
+                fetched_at = fetched_at.isoformat()
+            result = AssessorResult(
+                account_no=cached['account_no'],
+                status=cached['status'],
+                source_url=cached['source_url'],
+                current_owner=cached['current_owner'] or '',
+                account_type=cached['account_type'] or '',
+                vacant=bool(cached['vacant']),
+                error=cached['error'] or '',
+                fetched_at=fetched_at,
+            )
+        else:
+            result = client.fetch(row.get(pid_column))
+            repository.save_assessor_verification(result)
+
+        decision, reason = verification_decision(row.get(owner_column), result)
+        leads.at[index, 'Current Owner Verification'] = decision
+        leads.at[index, 'Current Assessor Owner'] = result.current_owner
+        leads.at[index, 'Assessor Account Type'] = result.account_type
+        leads.at[index, 'Assessor Vacant'] = 'Yes' if result.vacant else 'No'
+        leads.at[index, 'Assessor Verification Reason'] = reason
+        leads.at[index, 'Assessor Checked At'] = result.fetched_at
+        leads.at[index, 'Assessor URL'] = result.source_url
+        results.append(
+            {
+                **result.as_dict(),
+                'source_owner': str(row.get(owner_column) or ''),
+                'decision': decision,
+                'decision_reason': reason,
+            }
+        )
+        processed += 1
+
+    sheets['Prequalified - Verify'] = leads
+    verified_filename = f"Assessor_Verified_{meta['output_filename']}"
+    verified_path = os.path.join(app.config['OUTPUT_FOLDER'], verified_filename)
+    save_excel_formatted(sheets, verified_path)
+    meta['assessor_output_filename'] = verified_filename
+    meta['assessor_last_batch'] = {
+        'processed': processed,
+        'cache_hits': cache_hits,
+        'completed_at': datetime.now().isoformat(),
+    }
+    with open(meta_path, 'w') as file_handle:
+        json.dump(meta, file_handle)
+
+    counts = {}
+    for item in results:
+        counts[item['decision']] = counts.get(item['decision'], 0) + 1
+    return jsonify(
+        {
+            'success': True,
+            'processed': processed,
+            'cache_hits': cache_hits,
+            'counts': counts,
+            'results': results,
+            'download_file': verified_filename,
+            'remaining_estimate': int(
+                leads['Current Owner Verification']
+                .fillna('Not checked')
+                .astype(str)
+                .isin(('', 'Not checked', 'nan'))
+                .sum()
+            ),
+        }
+    )
 
 
 @app.route('/skiptrace/<job_id>', methods=['POST'])

@@ -69,6 +69,23 @@ The current Tulsa source does not include a row-level tax-year column. The
 selected year is therefore recorded as import provenance instead of being
 misrepresented as a row-level validation.
 
+## Tulsa County Assessor verification
+
+After qualification, the dashboard can verify current ownership in controlled
+batches of 25. Each official response is cached in PostgreSQL/SQLite so a
+repeated run does not create another county request. The verified export adds:
+
+- current Assessor owner
+- official account type
+- vacant indicator
+- owner-match decision and reason
+- source URL and checked timestamp
+
+Request failures, missing pages, and parser failures remain `Not verified`.
+They are never converted into exclusions. Commercial or changed-owner records
+go to review; only matching Residential/Agricultural records become verified
+candidates.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:
