@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from datetime import date, datetime, timezone
 
 import pandas as pd
@@ -289,6 +290,23 @@ class AssessorVerification(Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EnrichmentBatch(Base):
+    __tablename__ = 'enrichment_batches'
+    __table_args__ = (Index('idx_enrichment_status', 'status'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    lead_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    cost_per_record: Mapped[float] = mapped_column(Float, nullable=False)
+    budget_cap: Mapped[float] = mapped_column(Float, nullable=False)
+    estimated_cost: Mapped[float] = mapped_column(Float, nullable=False)
+    result_summary_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 def _as_dict(instance):
@@ -1432,3 +1450,207 @@ class CRMRepository:
                 for lead in top_leads
             ],
         }
+
+    def enrichment_summary(self):
+        with self.Session() as session:
+            missing = session.scalar(
+                select(func.count()).select_from(Lead).where(
+                    Lead.status.not_in(('closed', 'disqualified')),
+                    or_(Lead.phone.is_(None), func.trim(Lead.phone) == ''),
+                    or_(Lead.email.is_(None), func.trim(Lead.email) == ''),
+                )
+            ) or 0
+            batches = session.scalars(
+                select(EnrichmentBatch)
+                .order_by(EnrichmentBatch.created_at.desc())
+                .limit(20)
+            ).all()
+        return {
+            'eligible_leads': int(missing),
+            'batches': [
+                {
+                    **_as_dict(batch),
+                    'lead_count': len(json.loads(batch.lead_ids_json)),
+                    'result_summary': (
+                        json.loads(batch.result_summary_json)
+                        if batch.result_summary_json else None
+                    ),
+                }
+                for batch in batches
+            ],
+        }
+
+    def create_enrichment_batch(
+        self,
+        provider,
+        cost_per_record,
+        budget_cap,
+        max_records=5000,
+    ):
+        provider = str(provider or '').strip()
+        if not provider:
+            raise ValueError('Provider or research source is required')
+        try:
+            cost = round(float(cost_per_record), 4)
+            budget = round(float(budget_cap), 2)
+            limit = min(max(int(max_records), 1), 10000)
+        except (TypeError, ValueError) as error:
+            raise ValueError('Invalid cost, budget, or record limit') from error
+        if cost <= 0 or cost > 10:
+            raise ValueError('Cost per record must be between $0.0001 and $10')
+        if budget <= 0:
+            raise ValueError('Budget cap must be greater than zero')
+        affordable = min(limit, int(budget // cost))
+        if affordable < 1:
+            raise ValueError('Budget cap does not cover one record')
+
+        priority_order = case(
+            (Lead.priority == 'urgent', 0),
+            (Lead.priority == 'high', 1),
+            (Lead.priority == 'medium', 2),
+            else_=3,
+        )
+        now = utc_now()
+        with self.Session.begin() as session:
+            leads = session.scalars(
+                select(Lead).where(
+                    Lead.status.not_in(('closed', 'disqualified')),
+                    or_(Lead.phone.is_(None), func.trim(Lead.phone) == ''),
+                    or_(Lead.email.is_(None), func.trim(Lead.email) == ''),
+                ).order_by(
+                    priority_order,
+                    Lead.deceased_flag.desc(),
+                    Lead.total_due.desc(),
+                    Lead.id.desc(),
+                ).limit(affordable)
+            ).all()
+            if not leads:
+                raise ValueError('No eligible leads need contact enrichment')
+            batch_id = f"enr-{uuid.uuid4().hex[:10]}"
+            batch = EnrichmentBatch(
+                batch_id=batch_id,
+                provider=provider,
+                status='ready_for_export',
+                lead_ids_json=json.dumps([lead.id for lead in leads]),
+                cost_per_record=cost,
+                budget_cap=budget,
+                estimated_cost=round(len(leads) * cost, 2),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(batch)
+        return self.get_enrichment_batch(batch_id)
+
+    def get_enrichment_batch(self, batch_id, include_leads=False):
+        with self.Session() as session:
+            batch = session.scalar(
+                select(EnrichmentBatch).where(
+                    EnrichmentBatch.batch_id == batch_id
+                )
+            )
+            if not batch:
+                return None
+            lead_ids = json.loads(batch.lead_ids_json)
+            result = {
+                **_as_dict(batch),
+                'lead_count': len(lead_ids),
+                'result_summary': (
+                    json.loads(batch.result_summary_json)
+                    if batch.result_summary_json else None
+                ),
+            }
+            if include_leads:
+                leads = session.scalars(
+                    select(Lead).where(Lead.id.in_(lead_ids))
+                ).all()
+                by_id = {lead.id: lead for lead in leads}
+                result['leads'] = [
+                    {
+                        'Lead ID': by_id[lead_id].id,
+                        'Tax ID': by_id[lead_id].tax_id,
+                        'Owner Name': by_id[lead_id].owner_name,
+                        'Property Address': by_id[lead_id].property_address,
+                        'Property City': by_id[lead_id].property_city,
+                        'Mailing Address': by_id[lead_id].mailing_address,
+                        'Phone': '',
+                        'Email': '',
+                    }
+                    for lead_id in lead_ids if lead_id in by_id
+                ]
+            return result
+
+    def apply_enrichment_results(self, batch_id, rows):
+        now = utc_now()
+        with self.Session.begin() as session:
+            batch = session.scalar(
+                select(EnrichmentBatch).where(
+                    EnrichmentBatch.batch_id == batch_id
+                )
+            )
+            if not batch:
+                return None
+            allowed_ids = set(json.loads(batch.lead_ids_json))
+            summary = {
+                'rows_received': 0,
+                'leads_updated': 0,
+                'conflicts': 0,
+                'no_data': 0,
+                'invalid_rows': 0,
+            }
+            for row in rows:
+                summary['rows_received'] += 1
+                try:
+                    lead_id = int(row.get('Lead ID') or row.get('lead_id'))
+                except (TypeError, ValueError):
+                    summary['invalid_rows'] += 1
+                    continue
+                if lead_id not in allowed_ids:
+                    summary['invalid_rows'] += 1
+                    continue
+                lead = session.get(Lead, lead_id)
+                phone = str(row.get('Phone') or row.get('phone') or '').strip()
+                email = str(row.get('Email') or row.get('email') or '').strip()
+                if not phone and not email:
+                    summary['no_data'] += 1
+                    continue
+                conflict = (
+                    (phone and lead.phone and phone != lead.phone)
+                    or (email and lead.email and email.lower() != lead.email.lower())
+                )
+                if conflict:
+                    summary['conflicts'] += 1
+                    session.add(LeadActivity(
+                        lead_id=lead.id,
+                        activity_type='enrichment_conflict',
+                        detail=(
+                            f"Contact conflict from {batch.provider}; "
+                            "existing data preserved"
+                        ),
+                        created_at=now,
+                    ))
+                    continue
+                changed = False
+                if phone and not lead.phone:
+                    lead.phone = phone
+                    changed = True
+                if email and not lead.email:
+                    lead.email = email
+                    changed = True
+                if changed:
+                    lead.updated_at = now
+                    summary['leads_updated'] += 1
+                    session.add(LeadActivity(
+                        lead_id=lead.id,
+                        activity_type='contact_enriched',
+                        detail=f"Contact data imported from {batch.provider}",
+                        created_at=now,
+                    ))
+                else:
+                    summary['no_data'] += 1
+            batch.status = (
+                'completed_with_conflicts'
+                if summary['conflicts'] else 'completed'
+            )
+            batch.result_summary_json = json.dumps(summary)
+            batch.updated_at = now
+        return self.get_enrichment_batch(batch_id)

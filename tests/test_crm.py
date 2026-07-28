@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import io
 from datetime import date, timedelta
 
 import pandas as pd
@@ -421,6 +422,48 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Know exactly where to act next.', page.data)
         self.assertEqual(api['summary']['active_debt'], 14800)
+
+    def test_enrichment_exchange_caps_cost_and_preserves_conflicts(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test pay-per-use source',
+            cost_per_record=.15,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead_id = self.repository.list_leads()['items'][0]['id']
+
+        self.assertEqual(batch['lead_count'], 1)
+        self.assertEqual(batch['estimated_cost'], .15)
+        exported = self.client.get(
+            f"/api/enrichment/batches/{batch['batch_id']}/export"
+        )
+        imported = self.client.post(
+            f"/api/enrichment/batches/{batch['batch_id']}/results",
+            data={
+                'file': (
+                    io.BytesIO(
+                        f'Lead ID,Phone,Email\n{lead_id},9185550100,\n'.encode()
+                    ),
+                    'results.csv',
+                ),
+            },
+            content_type='multipart/form-data',
+        )
+        conflict = self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead_id, 'Phone': '9185559999'}],
+        )
+        detail = self.repository.get_lead(lead_id)
+        page = self.client.get('/enrichment')
+
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn(b'Lead ID,Tax ID,Owner Name', exported.data)
+        self.assertEqual(imported.status_code, 200)
+        self.assertEqual(detail['phone'], '9185550100')
+        self.assertEqual(conflict['result_summary']['conflicts'], 1)
+        self.assertEqual(detail['activity'][0]['activity_type'], 'enrichment_conflict')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Control the cost before you enrich.', page.data)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']

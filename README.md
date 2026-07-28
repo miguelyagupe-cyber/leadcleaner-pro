@@ -170,6 +170,19 @@ follow-ups, missing contact data, and unresolved research. The report uses the
 latest CRM record per property so repeated imports do not inflate totals, and
 it explicitly avoids estimating revenue, property value, or close probability.
 
+## Provider-neutral enrichment exchange
+
+The Enrichment workspace creates controlled contact-research batches for active
+leads with neither phone nor email. Daryl supplies the source, per-record price,
+hard budget cap, and maximum record count before the prioritized request CSV is
+created. No subscription or provider connection is assumed.
+
+Completed CSV or Excel results can be imported into the same batch. New contact
+data fills empty fields and writes source activity to the lead. A different
+phone or email never overwrites trusted CRM data: it is preserved as a recorded
+conflict for review. Batch status, estimated spend, update count, conflicts,
+and records without results remain available in PostgreSQL.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:
