@@ -1,13 +1,25 @@
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import (
+    Flask,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 import pandas as pd
 import re
 import os
 import uuid
 import json
 import hashlib
+import hmac
 import io
+import secrets
+import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from crm import (
     CRM_PRIORITIES,
     CRM_STATUSES,
@@ -22,6 +34,13 @@ from qualification import qualify_leads
 from assessor import AssessorResult, TulsaAssessorClient, normalize_account_no, verification_decision
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
+app.config['APP_LOGIN_EMAIL'] = os.environ.get('APP_LOGIN_EMAIL', '').strip().lower()
+app.config['APP_LOGIN_PASSWORD'] = os.environ.get('APP_LOGIN_PASSWORD', '')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=12)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('RENDER'))
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
@@ -35,6 +54,135 @@ app.config['CRM_DATABASE'] = os.environ.get(
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
+LOGIN_ATTEMPTS = {}
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_ATTEMPTS = 5
+
+
+def authentication_configured():
+    return bool(
+        app.config.get('APP_LOGIN_EMAIL')
+        and app.config.get('APP_LOGIN_PASSWORD')
+    )
+
+
+def csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_urlsafe(32)
+    return session['csrf_token']
+
+
+@app.context_processor
+def inject_security_context():
+    return {'csrf_token': csrf_token()}
+
+
+@app.before_request
+def protect_private_workspace():
+    if app.config.get('TESTING') and not app.config.get('TEST_AUTH_ENABLED'):
+        return None
+    if request.endpoint in ('login', 'api_health') or request.endpoint == 'static':
+        return None
+    if not session.get('authenticated'):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Authentication required'}), 401
+        return redirect(url_for('login', next=request.path))
+    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        supplied = (
+            request.headers.get('X-CSRF-Token', '')
+            or request.form.get('csrf_token', '')
+        )
+        expected = session.get('csrf_token', '')
+        if not expected or not hmac.compare_digest(supplied, expected):
+            return jsonify({'error': 'Security token is missing or invalid'}), 403
+    return None
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Permissions-Policy'] = (
+        'camera=(), microphone=(), geolocation=()'
+    )
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    if request.endpoint != 'api_health':
+        response.headers['Cache-Control'] = 'no-store, private'
+    if app.config.get('SESSION_COOKIE_SECURE'):
+        response.headers['Strict-Transport-Security'] = (
+            'max-age=31536000; includeSubDomains'
+        )
+    return response
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    configured = authentication_configured()
+    if request.method == 'POST':
+        attempt_key = request.remote_addr or 'unknown'
+        now = time.monotonic()
+        recent_attempts = [
+            timestamp
+            for timestamp in LOGIN_ATTEMPTS.get(attempt_key, [])
+            if now - timestamp < LOGIN_WINDOW_SECONDS
+        ]
+        LOGIN_ATTEMPTS[attempt_key] = recent_attempts
+        supplied_token = request.form.get('csrf_token', '')
+        expected_token = session.get('csrf_token', '')
+        if len(recent_attempts) >= LOGIN_MAX_ATTEMPTS:
+            error = 'Too many sign-in attempts. Please wait 15 minutes.'
+        elif not expected_token or not hmac.compare_digest(
+            supplied_token,
+            expected_token,
+        ):
+            error = 'Your secure session expired. Please try again.'
+        elif not configured:
+            error = 'Private access has not been configured on the server.'
+        else:
+            email_matches = hmac.compare_digest(
+                request.form.get('email', '').strip().lower(),
+                app.config['APP_LOGIN_EMAIL'],
+            )
+            password_matches = hmac.compare_digest(
+                request.form.get('password', ''),
+                app.config['APP_LOGIN_PASSWORD'],
+            )
+            if email_matches and password_matches:
+                LOGIN_ATTEMPTS.pop(attempt_key, None)
+                session.clear()
+                session['authenticated'] = True
+                session['user_email'] = app.config['APP_LOGIN_EMAIL']
+                session['csrf_token'] = secrets.token_urlsafe(32)
+                session.permanent = True
+                destination = request.args.get('next', '/')
+                if not destination.startswith('/') or destination.startswith('//'):
+                    destination = '/'
+                return redirect(destination)
+            LOGIN_ATTEMPTS[attempt_key].append(now)
+            error = 'The email or password is incorrect.'
+    return render_template(
+        'login.html',
+        error=error,
+        configured=configured,
+    )
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 
 def get_crm():
