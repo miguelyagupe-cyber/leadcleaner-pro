@@ -146,6 +146,18 @@ Every move uses the normal CRM status update path and is written to the lead's
 activity history. Large stages show the highest-priority 50 cards while keeping
 the complete stage count and debt total visible.
 
+## Property intelligence workspace
+
+The Properties workspace consolidates repeated county-list appearances into
+one property card, using Tax ID as the primary identity and property address
+only when Tax ID is unavailable. It keeps the number of source records and tax
+years visible, but shows debt and workflow data from the latest operational
+record so repeated imports do not inflate opportunity totals.
+
+Each card connects the current owner and Assessor check with active evidence,
+call count, pipeline stage, and the full lead workspace. Search and stage
+filters operate on the consolidated property list.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

@@ -81,6 +81,9 @@ class CRMTest(unittest.TestCase):
             'tax_year': 2023,
             'stats': {'final': 2},
         }
+        self.dataframe = dataframe
+        self.job = job
+        self.columns = columns
         self.repository.import_leads(dataframe, job, columns)
 
     def tearDown(self):
@@ -357,6 +360,34 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(moved.status_code, 200)
         self.assertEqual(stages['negotiation']['count'], 1)
         self.assertEqual(stages['negotiation']['items'][0]['id'], lead_id)
+
+    def test_property_workspace_consolidates_repeated_imports(self):
+        repeated_job = {
+            **self.job,
+            'uid': 'job-2',
+            'source_filename': 'tulsa-refresh.xlsx',
+        }
+        self.repository.import_leads(
+            self.dataframe,
+            repeated_job,
+            self.columns,
+        )
+
+        properties = self.repository.list_properties()
+        alpha = next(
+            item for item in properties['items']
+            if item['tax_id'] == 'A-100'
+        )
+        page = self.client.get('/properties')
+        api = self.client.get('/api/properties?q=A-100').get_json()
+
+        self.assertEqual(properties['total'], 2)
+        self.assertEqual(alpha['record_count'], 2)
+        self.assertEqual(alpha['total_due'], 12500)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'One property. One source of truth.', page.data)
+        self.assertEqual(api['total'], 1)
+        self.assertIn('most recently updated record', api['methodology'])
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
