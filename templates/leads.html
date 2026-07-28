@@ -57,6 +57,23 @@
     .count-box strong { display:block; font:400 26px "Newsreader",serif; color:var(--gold-bright); }
     .count-box span { color:var(--dim); font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
     .toolbar { padding:12px; margin-bottom:13px; border:1px solid var(--border); border-radius:6px; background:var(--surface); display:flex; align-items:center; gap:8px; }
+    .execution { margin-bottom:14px; border:1px solid var(--border); border-radius:6px; background:var(--surface); overflow:hidden; }
+    .execution-head { padding:14px 17px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .execution-head strong { font:400 18px "Newsreader",serif; }
+    .execution-head span { color:var(--dim); font-size:9px; text-transform:uppercase; }
+    .checkin-form,.execution-live { padding:16px 17px; }
+    .checkin-grid { display:grid; grid-template-columns:2fr .7fr .7fr auto; gap:9px; align-items:end; }
+    .checkin-field label { display:block; margin-bottom:6px; color:var(--dim); font-size:8px; text-transform:uppercase; }
+    .checkin-field input { width:100%; height:39px; padding:0 10px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); }
+    .execution-progress { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:14px; }
+    .progress-card { padding:12px; border:1px solid var(--soft); border-radius:4px; background:var(--bg); }
+    .progress-card span { color:var(--dim); font-size:8px; text-transform:uppercase; }
+    .progress-card strong { display:block; margin:6px 0; color:#d7d3c9; font-size:13px; }
+    .progress-track { height:4px; border-radius:3px; background:#292a2f; overflow:hidden; }
+    .progress-track i { display:block; height:100%; background:var(--gold); }
+    .execution-actions { display:flex; align-items:center; justify-content:space-between; margin-top:14px; gap:10px; }
+    .execution-focus { color:var(--muted); font-size:10px; }
+    .secondary-button { min-height:34px; padding:0 12px; border:1px solid var(--border); border-radius:4px; background:transparent; color:var(--muted); cursor:pointer; }
     .search { flex:1; min-width:230px; height:39px; padding:0 13px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text); outline:0; }
     .search:focus { border-color:var(--gold); }
     select { height:39px; min-width:145px; padding:0 30px 0 11px; border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--muted); outline:0; }
@@ -129,6 +146,7 @@
       .brand-name,.nav-label,.nav-item span,.user div { display:none; }
       .brand,.nav-item,.user { justify-content:center; }
       .toolbar { flex-wrap:wrap; }
+      .checkin-grid { grid-template-columns:1fr 1fr; }
       .search { flex-basis:100%; }
     }
     @media(max-width:700px) {
@@ -140,6 +158,7 @@
       .heading { align-items:flex-start; }
       .count-box { display:none; }
       select { flex:1; min-width:130px; }
+      .checkin-grid,.execution-progress { grid-template-columns:1fr; }
     }
   </style>
 </head>
@@ -177,6 +196,29 @@
           <div><div class="eyebrow">{{ 'Evidence review' if page_mode == 'research' else 'Daily calling queue' if page_mode == 'today' else 'Acquisition workspace' }}</div><h1>{{ 'Research Queue' if page_mode == 'research' else 'Today' if page_mode == 'today' else 'Leads' }}</h1><p>{{ 'Verify deceased-owner and mailing signals before outreach.' if page_mode == 'research' else 'Owners due for contact today, including overdue follow-ups.' if page_mode == 'today' else 'Every actionable owner and property from your processed county lists.' }}</p></div>
           <div class="count-box"><strong id="total-count">—</strong><span>Matching records</span></div>
         </section>
+
+        {% if page_mode == 'today' %}
+        <section class="execution" id="daily-execution">
+          <header class="execution-head"><strong>Daily execution</strong><span id="execution-date">Tulsa business day</span></header>
+          <form class="checkin-form" id="checkin-form">
+            <div class="checkin-grid">
+              <div class="checkin-field"><label>Today’s primary focus</label><input id="daily-focus" placeholder="Clear probate follow-ups and reach motivated owners" required></div>
+              <div class="checkin-field"><label>Call target</label><input id="call-target" type="number" min="0" max="500" value="25" required></div>
+              <div class="checkin-field"><label>Research target</label><input id="research-target" type="number" min="0" max="500" value="10" required></div>
+              <button class="gold-button" type="submit">Start the day</button>
+            </div>
+          </form>
+          <div class="execution-live" id="execution-live" style="display:none">
+            <div class="execution-focus" id="execution-focus"></div>
+            <div class="execution-progress">
+              <div class="progress-card"><span>Calls logged</span><strong id="calls-progress">0 / 0</strong><div class="progress-track"><i id="calls-bar"></i></div></div>
+              <div class="progress-card"><span>Evidence recorded</span><strong id="research-progress">0 / 0</strong><div class="progress-track"><i id="research-bar"></i></div></div>
+              <div class="progress-card"><span>Follow-ups still due</span><strong id="due-progress">0</strong><div class="progress-track"><i id="due-bar"></i></div></div>
+            </div>
+            <div class="execution-actions"><span class="execution-focus" id="execution-status">Progress updates automatically from CRM activity.</span><button class="secondary-button" id="close-day" type="button">Close the day</button></div>
+          </div>
+        </section>
+        {% endif %}
 
         <section class="toolbar">
           <input class="search" id="search" placeholder="Search owner, property address or Tax ID…">
@@ -365,7 +407,7 @@
       state.selectedLead=data.lead;
       $('call-outcome').value=''; $('call-duration').value=''; $('call-follow-up').value=''; $('call-notes').value='';
       $('edit-status').value=data.lead.status; $('edit-follow-up').value=(data.lead.next_follow_up||'').slice(0,10);
-      renderCalls(data.lead.calls); renderActivity(data.lead.activity); toast('Call outcome saved'); loadLeads();
+      renderCalls(data.lead.calls); renderActivity(data.lead.activity); toast('Call outcome saved'); loadLeads(); if(pageMode==='today') loadDailyExecution();
     });
     $('add-note').addEventListener('click',async()=>{
       if(!state.selectedLead) return; const body=$('note-body').value.trim(); if(!body) return toast('Write a note first.');
@@ -385,7 +427,7 @@
       const response=await fetch(`/api/leads/${state.selectedLead.id}/evidence`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const data=await response.json(); if(!response.ok) return toast(data.error||'Evidence could not be saved');
       ['evidence-source','evidence-url','evidence-case','evidence-subject','evidence-date','evidence-notes'].forEach(id=>$(id).value='');
-      state.selectedLead=data.lead; renderEvidence(data.lead.evidence,data.lead.evidence_summary); renderActivity(data.lead.activity); $('edit-research').value=data.lead.research_status; toast('Evidence added'); loadLeads();
+      state.selectedLead=data.lead; renderEvidence(data.lead.evidence,data.lead.evidence_summary); renderActivity(data.lead.activity); $('edit-research').value=data.lead.research_status; toast('Evidence added'); loadLeads(); if(pageMode==='today') loadDailyExecution();
     });
     $('search').addEventListener('input',()=>{ clearTimeout(state.timer); state.timer=setTimeout(()=>{state.page=1;loadLeads();},250); });
     ['status-filter','priority-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
@@ -394,6 +436,24 @@
     $('next-page').addEventListener('click',()=>{if(state.page<state.pages){state.page++;loadLeads();}});
     $('close-drawer').addEventListener('click',closeDrawer); $('backdrop').addEventListener('click',closeDrawer);
     document.addEventListener('keydown',event=>{if(event.key==='Escape')closeDrawer();});
+    async function loadDailyExecution(){
+      if(pageMode!=='today') return;
+      const response=await fetch('/api/today/execution');const data=await response.json();
+      $('execution-date').textContent=`${data.work_date} · Tulsa time`;
+      if(!data.check_in){$('checkin-form').style.display='block';$('execution-live').style.display='none';return;}
+      const item=data.check_in;$('checkin-form').style.display='none';$('execution-live').style.display='block';
+      $('execution-focus').textContent=`Today’s focus: ${item.focus}`;
+      $('calls-progress').textContent=`${item.call_progress.completed} / ${item.call_progress.target}`;$('calls-bar').style.width=`${item.call_progress.percent}%`;
+      $('research-progress').textContent=`${item.research_progress.completed} / ${item.research_progress.target}`;$('research-bar').style.width=`${item.research_progress.percent}%`;
+      $('due-progress').textContent=data.follow_ups_due;$('due-bar').style.width=data.follow_ups_due?'100%':'0%';
+      $('execution-status').textContent=item.status==='completed'?'Day closed. Activity remains visible in the CRM.':'Progress updates automatically from CRM activity.';
+      $('close-day').style.display=item.status==='completed'?'none':'inline-block';
+    }
+    if(pageMode==='today'){
+      $('checkin-form').addEventListener('submit',async event=>{event.preventDefault();const response=await fetch('/api/today/check-in',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:$('daily-focus').value.trim(),call_target:$('call-target').value,research_target:$('research-target').value})});const data=await response.json();if(!response.ok)return toast(data.error);toast('Daily check-in started');loadDailyExecution();});
+      $('close-day').addEventListener('click',async()=>{const notes=window.prompt('Closing note for today (optional):')||'';const response=await fetch('/api/today/check-out',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({closing_notes:notes})});const data=await response.json();if(!response.ok)return toast(data.error);toast('Day closed');loadDailyExecution();});
+      loadDailyExecution();
+    }
     const initial=new URLSearchParams(location.search); if(initial.get('status')) $('status-filter').value=initial.get('status');
     loadLeads().then(()=>{if(initial.get('lead'))openLead(initial.get('lead'));});
   </script>

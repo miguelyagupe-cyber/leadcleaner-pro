@@ -196,6 +196,18 @@ saved stage. Google Drive is deliberately labelled as not connected: the
 current release uses explicit manual uploads and does not imply background
 access to Daryl's files.
 
+## Daily execution system
+
+The Today workspace requires one check-in per Tulsa business day. Daryl records
+the day's primary focus plus call and research targets before working the due
+follow-up queue. The system uses the `America/Chicago` timezone rather than the
+server timezone.
+
+Progress is calculated from call logs and active evidence records created that
+day, so activity is never entered twice. The live view shows targets, completed
+work, and follow-ups still due. Closing the day preserves an optional summary
+and leaves the complete activity history attached to its leads.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

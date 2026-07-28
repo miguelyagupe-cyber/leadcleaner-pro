@@ -1060,6 +1060,31 @@ def api_import_operations():
     })
 
 
+@app.route('/api/today/execution')
+def api_daily_execution():
+    return jsonify(get_crm().daily_execution())
+
+
+@app.route('/api/today/check-in', methods=['POST'])
+def api_start_daily_check_in():
+    try:
+        result = get_crm().start_daily_check_in(
+            request.get_json(silent=True) or {}
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    return jsonify({'success': True, **result}), 201
+
+
+@app.route('/api/today/check-out', methods=['POST'])
+def api_close_daily_check_in():
+    payload = request.get_json(silent=True) or {}
+    result = get_crm().close_daily_check_in(payload.get('closing_notes'))
+    if not result:
+        return jsonify({'error': 'Start today’s check-in first'}), 404
+    return jsonify({'success': True, **result})
+
+
 @app.route('/api/enrichment/batches', methods=['POST'])
 def api_create_enrichment_batch():
     payload = request.get_json(silent=True) or {}
