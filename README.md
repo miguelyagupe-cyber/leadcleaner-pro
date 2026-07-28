@@ -116,6 +116,24 @@ Repeated commits are idempotent: existing source identities are skipped and
 reported instead of duplicated. The current Assessor owner becomes the CRM
 owner while the complete source row remains in the audit JSON.
 
+## Calls and daily follow-ups
+
+Every lead supports structured inbound and outbound call logs. Each call stores
+the outcome, phone used, duration, notes, timestamp, and next follow-up. The
+outcome advances the pipeline automatically:
+
+- `No answer` and `Voicemail left` → Attempted contact
+- `Spoke — follow up` → Interested
+- `Appointment set` → Appointment scheduled
+- `Offer requested` → Negotiation
+- `Deal pending` → Contract pending
+- `Not interested` → Disqualified
+
+Outcomes that require another action cannot be saved without a follow-up date.
+The `Today` workspace lists active follow-ups due today or overdue, oldest
+first. Call history remains attached to the lead even when the lead later
+changes status.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

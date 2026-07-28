@@ -21,6 +21,8 @@ import time
 import requests
 from datetime import datetime, timedelta
 from crm import (
+    CALL_DIRECTIONS,
+    CALL_OUTCOMES,
     CRM_PRIORITIES,
     CRM_STATUSES,
     EVIDENCE_CONFIDENCE,
@@ -839,6 +841,7 @@ def get_dashboard_snapshot():
         ),
         'contacts_found': int(latest_stats.get('with_phone', 0)),
         'overdue_follow_ups': 0,
+        'follow_ups_due': 0,
     }
 
     return {
@@ -846,6 +849,13 @@ def get_dashboard_snapshot():
         'generated_at': datetime.now().isoformat(),
         'metrics': metrics,
         'attention': [
+            {
+                'type': 'follow_up',
+                'priority': 'High',
+                'title': 'Complete today’s follow-ups',
+                'detail': f"{metrics.get('follow_ups_due', 0)} owners are due for contact",
+                'count': metrics.get('follow_ups_due', 0),
+            },
             {
                 'type': 'deceased',
                 'priority': 'High',
@@ -895,6 +905,25 @@ def leads_page():
         evidence_outcomes=EVIDENCE_OUTCOMES,
         evidence_confidence=EVIDENCE_CONFIDENCE,
         identity_matches=IDENTITY_MATCHES,
+        call_outcomes=CALL_OUTCOMES,
+        call_directions=CALL_DIRECTIONS,
+    )
+
+
+@app.route('/today')
+def today_page():
+    return render_template(
+        'leads.html',
+        page_mode='today',
+        statuses=CRM_STATUSES,
+        priorities=CRM_PRIORITIES,
+        research_statuses=RESEARCH_STATUSES,
+        evidence_types=EVIDENCE_TYPES,
+        evidence_outcomes=EVIDENCE_OUTCOMES,
+        evidence_confidence=EVIDENCE_CONFIDENCE,
+        identity_matches=IDENTITY_MATCHES,
+        call_outcomes=CALL_OUTCOMES,
+        call_directions=CALL_DIRECTIONS,
     )
 
 
@@ -910,6 +939,8 @@ def research_page():
         evidence_outcomes=EVIDENCE_OUTCOMES,
         evidence_confidence=EVIDENCE_CONFIDENCE,
         identity_matches=IDENTITY_MATCHES,
+        call_outcomes=CALL_OUTCOMES,
+        call_directions=CALL_DIRECTIONS,
     )
 
 
@@ -921,6 +952,7 @@ def api_leads():
             status=request.args.get('status', '').strip(),
             priority=request.args.get('priority', '').strip(),
             research_only=request.args.get('research_only', '').lower() == 'true',
+            follow_up=request.args.get('follow_up', '').strip(),
             page=request.args.get('page', 1),
             per_page=request.args.get('per_page', 50),
         )
@@ -964,6 +996,18 @@ def api_add_lead_note(lead_id):
     if not note:
         return jsonify({'error': 'Lead not found'}), 404
     return jsonify({'success': True, 'note': note}), 201
+
+
+@app.route('/api/leads/<int:lead_id>/calls', methods=['POST'])
+def api_log_lead_call(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = get_crm().log_call(lead_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not result:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, **result}), 201
 
 
 @app.route('/api/leads/<int:lead_id>/evidence', methods=['POST'])

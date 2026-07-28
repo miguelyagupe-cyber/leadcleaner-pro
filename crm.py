@@ -51,6 +51,35 @@ EVIDENCE_TYPES = (
 EVIDENCE_OUTCOMES = ('supports_deceased', 'supports_living', 'inconclusive')
 EVIDENCE_CONFIDENCE = ('confirmed', 'strong', 'weak', 'rejected')
 IDENTITY_MATCHES = ('exact', 'probable', 'uncertain', 'mismatch')
+CALL_OUTCOMES = (
+    'no_answer',
+    'voicemail_left',
+    'wrong_number',
+    'spoke_follow_up',
+    'not_interested',
+    'appointment_set',
+    'offer_requested',
+    'deal_pending',
+)
+CALL_DIRECTIONS = ('outbound', 'inbound')
+CALL_OUTCOME_STATUSES = {
+    'no_answer': 'attempted_contact',
+    'voicemail_left': 'attempted_contact',
+    'wrong_number': 'contact_ready',
+    'spoke_follow_up': 'interested',
+    'not_interested': 'disqualified',
+    'appointment_set': 'appointment_scheduled',
+    'offer_requested': 'negotiation',
+    'deal_pending': 'contract_pending',
+}
+CALL_OUTCOMES_REQUIRING_FOLLOW_UP = (
+    'no_answer',
+    'voicemail_left',
+    'spoke_follow_up',
+    'appointment_set',
+    'offer_requested',
+    'deal_pending',
+)
 
 
 def utc_now():
@@ -187,6 +216,26 @@ class LeadActivity(Base):
     )
     activity_type: Mapped[str] = mapped_column(String(40), nullable=False)
     detail: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CallLog(Base):
+    __tablename__ = 'call_logs'
+    __table_args__ = (
+        Index('idx_call_logs_lead', 'lead_id'),
+        Index('idx_call_logs_outcome', 'outcome'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey('leads.id', ondelete='CASCADE'), nullable=False
+    )
+    direction: Mapped[str] = mapped_column(String(20), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(40), nullable=False)
+    phone_number: Mapped[str | None] = mapped_column(Text)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    next_follow_up: Mapped[str | None] = mapped_column(String(30))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -620,6 +669,7 @@ class CRMRepository:
         status='',
         priority='',
         research_only=False,
+        follow_up='',
         page=1,
         per_page=50,
     ):
@@ -644,6 +694,14 @@ class CRMRepository:
                     Lead.mailing_signal.in_(('Strong', 'Weak')),
                 )
             )
+        if follow_up == 'due':
+            conditions.extend(
+                (
+                    Lead.next_follow_up.is_not(None),
+                    Lead.next_follow_up <= date.today().isoformat(),
+                    Lead.status.not_in(('closed', 'disqualified')),
+                )
+            )
 
         page = max(int(page), 1)
         per_page = min(max(int(per_page), 1), 100)
@@ -662,6 +720,18 @@ class CRMRepository:
             (Lead.priority == 'medium', 2),
             else_=3,
         )
+        ordering = (
+            [Lead.next_follow_up.asc(), priority_order]
+            if follow_up == 'due'
+            else [priority_order]
+        )
+        ordering.extend(
+            (
+                Lead.deceased_flag.desc(),
+                Lead.total_due.desc(),
+                Lead.id.desc(),
+            )
+        )
 
         with self.Session() as session:
             total = session.scalar(
@@ -670,12 +740,7 @@ class CRMRepository:
             rows = session.execute(
                 select(Lead, latest_note.label('latest_note'))
                 .where(*conditions)
-                .order_by(
-                    priority_order,
-                    Lead.deceased_flag.desc(),
-                    Lead.total_due.desc(),
-                    Lead.id.desc(),
-                )
+                .order_by(*ordering)
                 .limit(per_page)
                 .offset(offset)
             ).all()
@@ -705,6 +770,11 @@ class CRMRepository:
                 .where(LeadActivity.lead_id == lead_id)
                 .order_by(LeadActivity.created_at.desc())
             ).all()
+            calls = session.scalars(
+                select(CallLog)
+                .where(CallLog.lead_id == lead_id)
+                .order_by(CallLog.created_at.desc())
+            ).all()
             evidence = session.scalars(
                 select(ResearchEvidence)
                 .where(ResearchEvidence.lead_id == lead_id)
@@ -714,6 +784,7 @@ class CRMRepository:
                 **_as_dict(lead),
                 'notes': [_as_dict(note) for note in notes],
                 'activity': [_as_dict(item) for item in activity],
+                'calls': [_as_dict(item) for item in calls],
                 'evidence': [_as_dict(item) for item in evidence],
                 'evidence_summary': summarize_evidence(evidence),
             }
@@ -781,6 +852,74 @@ class CRMRepository:
                 )
             )
         return {'id': note_id, 'lead_id': lead_id, 'body': body, 'created_at': now}
+
+    def log_call(self, lead_id, payload):
+        direction = str(payload.get('direction', 'outbound')).strip()
+        outcome = str(payload.get('outcome', '')).strip()
+        phone_number = str(payload.get('phone_number', '')).strip() or None
+        notes = str(payload.get('notes', '')).strip() or None
+        next_follow_up = str(payload.get('next_follow_up', '')).strip() or None
+        if direction not in CALL_DIRECTIONS:
+            raise ValueError('Invalid call direction')
+        if outcome not in CALL_OUTCOMES:
+            raise ValueError('Invalid call outcome')
+        if outcome in CALL_OUTCOMES_REQUIRING_FOLLOW_UP and not next_follow_up:
+            raise ValueError('This outcome requires a next follow-up date')
+        if next_follow_up:
+            try:
+                follow_up_date = date.fromisoformat(next_follow_up)
+            except ValueError as error:
+                raise ValueError('Invalid next follow-up date') from error
+            if follow_up_date < date.today():
+                raise ValueError('Next follow-up cannot be in the past')
+        duration = payload.get('duration_minutes')
+        if duration in (None, ''):
+            duration = None
+        else:
+            try:
+                duration = int(duration)
+            except (TypeError, ValueError) as error:
+                raise ValueError('Call duration must be a whole number') from error
+            if duration < 0 or duration > 1440:
+                raise ValueError('Call duration must be between 0 and 1440 minutes')
+
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            if not lead:
+                return None
+            call = CallLog(
+                lead_id=lead_id,
+                direction=direction,
+                outcome=outcome,
+                phone_number=phone_number,
+                duration_minutes=duration,
+                notes=notes,
+                next_follow_up=next_follow_up,
+                created_at=now,
+            )
+            session.add(call)
+            lead.status = CALL_OUTCOME_STATUSES[outcome]
+            lead.last_contacted_at = now.isoformat()
+            lead.next_follow_up = (
+                None if outcome == 'not_interested'
+                else next_follow_up
+            )
+            lead.updated_at = now
+            session.add(
+                LeadActivity(
+                    lead_id=lead_id,
+                    activity_type='call_logged',
+                    detail=(
+                        f"{direction.title()} call · "
+                        f"{outcome.replace('_', ' ').title()}"
+                    ),
+                    created_at=now,
+                )
+            )
+            session.flush()
+            call_id = call.id
+        return {'call_id': call_id, 'lead': self.get_lead(lead_id)}
 
     def add_evidence(self, lead_id, payload):
         evidence_type = str(payload.get('evidence_type', '')).strip()
@@ -935,10 +1074,20 @@ class CRMRepository:
                     Lead.status.not_in(('closed', 'disqualified')),
                 )
             ) or 0
+            due_today = session.scalar(
+                select(func.count())
+                .select_from(Lead)
+                .where(
+                    Lead.next_follow_up.is_not(None),
+                    Lead.next_follow_up <= today,
+                    Lead.status.not_in(('closed', 'disqualified')),
+                )
+            ) or 0
         return {
             'actionable_leads': total,
             'deceased_signals': deceased,
             'research_queue': research,
             'contacts_found': contacts,
             'overdue_follow_ups': overdue,
+            'follow_ups_due': due_today,
         }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>{{ 'Research Queue' if page_mode == 'research' else 'Leads' }} · LeadCleaner Pro</title>
+  <title>{{ 'Research Queue' if page_mode == 'research' else 'Today' if page_mode == 'today' else 'Leads' }} · LeadCleaner Pro</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400&display=swap" rel="stylesheet">
@@ -110,6 +110,10 @@
     .activity { padding:9px 0 9px 15px; border-left:1px solid #313238; position:relative; color:var(--muted); font-size:10px; }
     .activity::before { content:""; position:absolute; width:5px; height:5px; border-radius:50%; background:var(--gold); left:-3px; top:14px; }
     .activity time { display:block; margin-top:3px; }
+    .call-card { margin-top:9px; padding:11px 12px; border:1px solid var(--border); border-radius:5px; background:#131416; }
+    .call-card strong { display:block; color:var(--text); font-size:11px; font-weight:500; }
+    .call-card p { margin:5px 0 0; color:var(--muted); font-size:10px; line-height:1.55; white-space:pre-wrap; }
+    .call-card time { display:block; margin-top:6px; color:var(--dim); font-size:9px; }
     .evidence-summary { padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:4px; background:var(--bg); }
     .evidence-summary strong { display:block; color:var(--gold-bright); font-size:12px; }
     .evidence-summary span { display:block; margin-top:4px; color:var(--dim); font-size:10px; line-height:1.45; }
@@ -147,7 +151,7 @@
         <div class="nav-section">
           <div class="nav-label">Workspace</div>
           <a class="nav-item" href="/"><span class="nav-icon">▦</span><span>Overview</span></a>
-          <a class="nav-item" href="/"><span class="nav-icon">☼</span><span>Today</span></a>
+          <a class="nav-item {{ 'active' if page_mode == 'today' else '' }}" href="/today"><span class="nav-icon">☼</span><span>Today</span></a>
         </div>
         <div class="nav-section">
           <div class="nav-label">Intelligence</div>
@@ -166,10 +170,10 @@
     </aside>
 
     <main>
-      <header class="topbar"><div class="crumb">Tulsa County <span>/</span> {{ 'Research Queue' if page_mode == 'research' else 'Leads' }}</div><div class="status">CRM database connected</div></header>
+      <header class="topbar"><div class="crumb">Tulsa County <span>/</span> {{ 'Research Queue' if page_mode == 'research' else 'Today' if page_mode == 'today' else 'Leads' }}</div><div class="status">CRM database connected</div></header>
       <div class="content">
         <section class="heading">
-          <div><div class="eyebrow">{{ 'Evidence review' if page_mode == 'research' else 'Acquisition workspace' }}</div><h1>{{ 'Research Queue' if page_mode == 'research' else 'Leads' }}</h1><p>{{ 'Verify deceased-owner and mailing signals before outreach.' if page_mode == 'research' else 'Every actionable owner and property from your processed county lists.' }}</p></div>
+          <div><div class="eyebrow">{{ 'Evidence review' if page_mode == 'research' else 'Daily calling queue' if page_mode == 'today' else 'Acquisition workspace' }}</div><h1>{{ 'Research Queue' if page_mode == 'research' else 'Today' if page_mode == 'today' else 'Leads' }}</h1><p>{{ 'Verify deceased-owner and mailing signals before outreach.' if page_mode == 'research' else 'Owners due for contact today, including overdue follow-ups.' if page_mode == 'today' else 'Every actionable owner and property from your processed county lists.' }}</p></div>
           <div class="count-box"><strong id="total-count">—</strong><span>Matching records</span></div>
         </section>
 
@@ -225,8 +229,21 @@
         <button class="gold-button" id="add-evidence">Add evidence</button>
         <div id="evidence-list"></div>
       </section>
+      <section class="section">
+        <div class="section-title">Log a call</div>
+        <div class="field-grid">
+          <div class="field"><label>Direction</label><select id="call-direction">{% for value in call_directions %}<option value="{{ value }}">{{ value.title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Outcome</label><select id="call-outcome"><option value="">Select outcome</option>{% for value in call_outcomes %}<option value="{{ value }}">{{ value.replace('_',' ').title() }}</option>{% endfor %}</select></div>
+          <div class="field"><label>Phone used</label><input id="call-phone" placeholder="Phone number called"></div>
+          <div class="field"><label>Duration (minutes)</label><input id="call-duration" type="number" min="0" max="1440" placeholder="0"></div>
+          <div class="field"><label>Next follow-up</label><input id="call-follow-up" type="date"></div>
+        </div>
+        <textarea id="call-notes" placeholder="What happened, who answered, objections, motivation and next action…" style="margin-top:10px;"></textarea>
+        <button class="gold-button" id="log-call">Save call outcome</button>
+        <div id="calls-list"></div>
+      </section>
       <section class="section"><div class="section-title">Contact data</div><div class="field-grid"><div class="field"><label>Phone</label><input id="edit-phone" placeholder="Add phone number"></div><div class="field"><label>Email</label><input id="edit-email" type="email" placeholder="Add email address"></div></div><button class="gold-button" id="save-contact">Save contact</button></section>
-      <section class="section"><div class="section-title">Add note</div><textarea id="note-body" placeholder="Record call outcome, research evidence or next action…"></textarea><button class="gold-button" id="add-note">Add note</button><div id="notes-list"></div></section>
+      <section class="section"><div class="section-title">Add note</div><textarea id="note-body" placeholder="Record research context or a general internal note…"></textarea><button class="gold-button" id="add-note">Add note</button><div id="notes-list"></div></section>
       <section class="section"><div class="section-title">Activity history</div><div id="activity-list"></div></section>
     </div>
   </aside>
@@ -250,7 +267,12 @@
     };
     const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const label = value => String(value || '').replaceAll('_',' ').replace(/\b\w/g, c => c.toUpperCase());
-    const dateLabel = value => value ? new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(new Date(value)) : '—';
+    const dateLabel = value => {
+      if(!value) return '—';
+      const raw=String(value);
+      const parsed=new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw)?`${raw}T12:00:00`:raw);
+      return new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric',year:'numeric'}).format(parsed);
+    };
     function toast(message){ $('toast').textContent=message; $('toast').classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('toast').classList.remove('show'),2200); }
 
     function params(){
@@ -259,6 +281,7 @@
       if($('status-filter').value) query.set('status',$('status-filter').value);
       if($('priority-filter').value) query.set('priority',$('priority-filter').value);
       if(pageMode === 'research') query.set('research_only','true');
+      if(pageMode === 'today') query.set('follow_up','due');
       return query;
     }
     async function loadLeads(){
@@ -288,16 +311,21 @@
       $('drawer-owner').textContent=lead.owner_name; $('drawer-property').textContent=lead.property_address || 'Property address unavailable';
       $('edit-status').value=lead.status; $('edit-priority').value=lead.priority; $('edit-research').value=lead.research_status;
       $('edit-follow-up').value=(lead.next_follow_up || '').slice(0,10); $('edit-phone').value=lead.phone || ''; $('edit-email').value=lead.email || '';
+      $('call-outcome').value=''; $('call-duration').value=''; $('call-follow-up').value=''; $('call-notes').value='';
       $('lead-details').innerHTML=[
         ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],
         ['Mailing city',lead.mailing_city],['Mailing state',lead.mailing_state],['ZIP code',lead.zip_code],['Tax year',lead.tax_year],
         ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None']
       ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
-      renderEvidence(lead.evidence, lead.evidence_summary); renderNotes(lead.notes); renderActivity(lead.activity);
+      $('call-phone').value=lead.phone || '';
+      renderEvidence(lead.evidence, lead.evidence_summary); renderCalls(lead.calls); renderNotes(lead.notes); renderActivity(lead.activity);
       $('backdrop').classList.add('open'); $('drawer').classList.add('open');
     }
     function closeDrawer(){ $('backdrop').classList.remove('open'); $('drawer').classList.remove('open'); state.selectedLead=null; }
     function renderNotes(notes){ $('notes-list').innerHTML=notes?.length?notes.map(note=>`<div class="note"><p>${esc(note.body)}</p><time>${dateLabel(note.created_at)}</time></div>`).join(''):'<div class="note muted">No notes yet.</div>'; }
+    function renderCalls(calls){
+      $('calls-list').innerHTML=calls?.length?calls.map(call=>`<div class="call-card"><strong>${label(call.direction)} · ${label(call.outcome)}</strong><p>${call.phone_number?`Phone: ${esc(call.phone_number)}${call.duration_minutes!==null?` · ${esc(call.duration_minutes)} min`:''}<br>`:''}${call.notes?esc(call.notes):'No call notes'}${call.next_follow_up?`<br>Next follow-up: ${dateLabel(call.next_follow_up)}`:''}</p><time>${dateLabel(call.created_at)}</time></div>`).join(''):'<div class="note muted">No calls logged yet.</div>';
+    }
     function renderEvidence(items, summary){
       $('evidence-summary').innerHTML=`<strong>${esc(summary?.label || 'No evidence')}</strong><span>${esc(summary?.reason || 'No research evidence has been recorded')}</span>`;
       $('evidence-list').innerHTML=items?.length?items.map(item=>`<div class="evidence-card"><strong>${label(item.evidence_type)} · ${label(item.outcome)}${item.retracted_at?' · Retracted':''}</strong><p>${esc(item.source_name)}${item.case_number?` · ${esc(item.case_number)}`:''}<br>${label(item.confidence)} confidence · ${label(item.identity_match)} identity match${item.notes?`<br>${esc(item.notes)}`:''}${item.retraction_reason?`<br>Retraction: ${esc(item.retraction_reason)}`:''}</p>${item.source_url?`<a href="${esc(item.source_url)}" target="_blank" rel="noopener">Open source ↗</a>`:''}${!item.retracted_at?` <button class="clear retract-evidence" data-evidence-id="${item.id}" type="button">Retract</button>`:''}</div>`).join(''):'<div class="note muted">No evidence recorded yet.</div>';
@@ -323,6 +351,21 @@
       patchLead({[field]:event.target.value||null});
     }));
     $('save-contact').addEventListener('click',()=>patchLead({phone:$('edit-phone').value.trim(),email:$('edit-email').value.trim()}));
+    $('log-call').addEventListener('click',async()=>{
+      if(!state.selectedLead) return;
+      const payload={
+        direction:$('call-direction').value,outcome:$('call-outcome').value,
+        phone_number:$('call-phone').value.trim(),duration_minutes:$('call-duration').value,
+        next_follow_up:$('call-follow-up').value,notes:$('call-notes').value.trim()
+      };
+      if(!payload.outcome) return toast('Select a call outcome first.');
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/calls`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data=await response.json(); if(!response.ok) return toast(data.error||'Call could not be saved');
+      state.selectedLead=data.lead;
+      $('call-outcome').value=''; $('call-duration').value=''; $('call-follow-up').value=''; $('call-notes').value='';
+      $('edit-status').value=data.lead.status; $('edit-follow-up').value=(data.lead.next_follow_up||'').slice(0,10);
+      renderCalls(data.lead.calls); renderActivity(data.lead.activity); toast('Call outcome saved'); loadLeads();
+    });
     $('add-note').addEventListener('click',async()=>{
       if(!state.selectedLead) return; const body=$('note-body').value.trim(); if(!body) return toast('Write a note first.');
       const response=await fetch(`/api/leads/${state.selectedLead.id}/notes`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body})});
