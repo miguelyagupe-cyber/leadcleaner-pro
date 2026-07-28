@@ -378,6 +378,50 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Daily execution', page.data)
         self.assertIn(b'Today\xe2\x80\x99s primary focus', page.data)
 
+    def test_operational_alerts_are_deduplicated_and_persistent(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': yesterday},
+        )
+        for outcome, evidence_type in (
+            ('supports_deceased', 'probate_case'),
+            ('supports_living', 'other'),
+        ):
+            self.repository.add_evidence(
+                lead_id,
+                {
+                    'evidence_type': evidence_type,
+                    'outcome': outcome,
+                    'confidence': 'confirmed',
+                    'identity_match': 'exact',
+                    'source_name': 'Official record',
+                },
+            )
+        self.repository.save_processing_job({
+            'uid': 'alert-job',
+            'status': 'ready_for_approval',
+            'source_filename': 'tulsa-alert.xlsx',
+            'stats': {'final': 1},
+        })
+
+        first = self.repository.list_operational_alerts()
+        second = self.repository.list_operational_alerts()
+        marked = self.client.post(
+            f"/api/alerts/{first['items'][0]['id']}/read"
+        )
+        after = self.client.get('/api/alerts').get_json()
+        page = self.client.get('/alerts')
+
+        self.assertEqual(first['unread'], 3)
+        self.assertEqual(len(first['items']), 3)
+        self.assertEqual(len(second['items']), 3)
+        self.assertEqual(marked.status_code, 200)
+        self.assertEqual(after['unread'], 2)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Nothing important slips through.', page.data)
+
     def test_pipeline_board_aggregates_stages_and_debt(self):
         board = self.repository.pipeline_board()
         stages = {stage['status']: stage for stage in board['stages']}
