@@ -154,6 +154,18 @@ database automatically. This deliberately favors workflow durability for the
 current low-frequency list cadence; retention policies or external object
 storage can be added when file volume makes that worthwhile.
 
+Each processing run also exposes a persisted workflow state:
+
+```text
+Upload received → Qualifying records → Ready for Assessor
+→ Assessor in progress → Ready for approval → Imported to CRM
+```
+
+The dashboard shows that state and can reopen any recent run. Assessor counts
+are cumulative, so verification can continue safely across sessions, devices,
+restarts, or deploys. Failed uploads are retained with an error state instead
+of disappearing from the operational history.
+
 The health endpoint confirms which database engine is active without exposing
 credentials:
 

@@ -99,6 +99,77 @@ def materialize_artifact(job_id, kind, filename, folder):
         file_handle.write(artifact['content'])
     return path
 
+
+JOB_STATUS_LABELS = {
+    'uploaded': 'Upload received',
+    'qualifying': 'Qualifying records',
+    'qualification_ready': 'Ready for Assessor',
+    'assessor_in_progress': 'Assessor in progress',
+    'ready_for_approval': 'Ready for approval',
+    'imported': 'Imported to CRM',
+    'failed': 'Needs attention',
+}
+
+
+def processing_job_snapshot(meta):
+    status = meta.get('status', 'qualification_ready')
+    stats = meta.get('stats', {})
+    assessor = meta.get('assessor_progress', {})
+    total = int(
+        assessor.get('total')
+        or stats.get('prequalified')
+        or stats.get('final')
+        or 0
+    )
+    checked = int(assessor.get('checked', 0))
+    if status == 'uploaded':
+        progress = 10
+    elif status == 'qualifying':
+        progress = 35
+    elif status == 'qualification_ready':
+        progress = 55
+    elif status == 'assessor_in_progress':
+        progress = 55 + round(35 * checked / max(total, 1))
+    elif status == 'ready_for_approval':
+        progress = 90
+    elif status == 'imported':
+        progress = 100
+    else:
+        progress = int(meta.get('progress', 0))
+    output_filename = meta.get(
+        'assessor_output_filename',
+        meta.get('output_filename'),
+    )
+    return {
+        'id': meta.get('uid'),
+        'status': status,
+        'status_label': JOB_STATUS_LABELS.get(status, status.replace('_', ' ').title()),
+        'progress': min(max(progress, 0), 100),
+        'tax_year': meta.get('tax_year'),
+        'source_filename': meta.get('source_filename'),
+        'output_filename': output_filename,
+        'stats': stats,
+        'assessor': {
+            'checked': checked,
+            'total': total,
+            'remaining': max(total - checked, 0),
+            'decision_counts': assessor.get('decision_counts', {}),
+        },
+        'error': meta.get('error'),
+        'actions': {
+            'verify_assessor': status in (
+                'qualification_ready',
+                'assessor_in_progress',
+            ),
+            'preview_approval': status in (
+                'assessor_in_progress',
+                'ready_for_approval',
+                'imported',
+            ) and bool(meta.get('assessor_output_filename')),
+            'download': bool(output_filename),
+        },
+    }
+
 # ─── SKIP TRACING CONFIG ──────────────────────────────────────────────────────
 SKIP_TRACE_PROVIDER = 'none'
 SKIP_TRACE_API_KEY = os.environ.get('SKIP_TRACE_API_KEY', '')
@@ -586,8 +657,12 @@ def get_dashboard_snapshot():
             os.path.basename(output_filename),
         )
         stats = meta.get('stats', {})
+        workflow = processing_job_snapshot(meta)
         jobs.append({
             'id': meta.get('uid'),
+            'status': workflow['status'],
+            'status_label': workflow['status_label'],
+            'progress': workflow['progress'],
             'tax_year': meta.get('tax_year'),
             'completed_at': completed_at.isoformat(),
             'completed_label': completed_at.strftime('%b %d, %Y · %I:%M %p'),
@@ -796,10 +871,25 @@ def process():
     uid = str(uuid.uuid4())[:8]
     upload_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{uid}_input{ext}')
     file.save(upload_path)
+    job_meta = {
+        'uid': uid,
+        'source_filename': file.filename,
+        'tax_year': tax_year,
+        'stats': {},
+        'status': 'uploaded',
+        'created_at': datetime.now().isoformat(),
+    }
+    save_job_meta(job_meta)
+    persist_artifact(uid, 'source', os.path.basename(upload_path), upload_path)
 
     try:
+        job_meta['status'] = 'qualifying'
+        save_job_meta(job_meta)
         df = pd.read_csv(upload_path) if ext == '.csv' else pd.read_excel(upload_path, engine='openpyxl')
     except Exception as e:
+        job_meta['status'] = 'failed'
+        job_meta['error'] = f'Could not read file: {str(e)}'
+        save_job_meta(job_meta)
         return jsonify({'error': f'Could not read file: {str(e)}'}), 400
 
     try:
@@ -807,6 +897,10 @@ def process():
         cleaned_df = qualification['qualified']
         stats = qualification['stats']
     except Exception as e:
+        job_meta['status'] = 'failed'
+        job_meta['error'] = f'Error during cleaning: {str(e)}'
+        job_meta['columns_found'] = list(df.columns)
+        save_job_meta(job_meta)
         return jsonify({'error': f'Error during cleaning: {str(e)}', 'columns_found': list(df.columns)}), 500
 
     date_str = datetime.now().strftime('%Y%m%d')
@@ -824,16 +918,11 @@ def process():
         output_path
     )
 
-    job_meta = {
-        'uid': uid,
-        'source_filename': file.filename,
-        'output_filename': output_filename,
-        'tax_year': tax_year,
-        'stats': stats,
-        'created_at': datetime.now().isoformat(),
-    }
+    job_meta['output_filename'] = output_filename
+    job_meta['stats'] = stats
+    job_meta['status'] = 'qualification_ready'
+    job_meta.pop('error', None)
     save_job_meta(job_meta)
-    persist_artifact(uid, 'source', os.path.basename(upload_path), upload_path)
     persist_artifact(uid, 'qualification', output_filename, output_path)
 
     # Qualification runs remain reviewable exports. A separate explicit commit
@@ -849,6 +938,28 @@ def process():
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'
     })
+
+
+@app.route('/api/jobs/<job_id>')
+def processing_job(job_id):
+    meta = load_job_meta(job_id)
+    if not meta:
+        return jsonify({'error': 'Processing job not found'}), 404
+    snapshot = processing_job_snapshot(meta)
+    output_filename = snapshot['output_filename']
+    snapshot['download_available'] = bool(
+        output_filename
+        and (
+            get_crm().get_processing_artifact(filename=output_filename)
+            or os.path.exists(
+                os.path.join(
+                    app.config['OUTPUT_FOLDER'],
+                    os.path.basename(output_filename),
+                )
+            )
+        )
+    )
+    return jsonify({'success': True, 'job': snapshot})
 
 
 def _approved_import_snapshot(job_id):
@@ -1005,6 +1116,7 @@ def commit_approved_import(job_id):
         snapshot['meta'].get('crm_imported', 0)
     ) + imported
     snapshot['meta']['crm_approval_token'] = snapshot['approval_token']
+    snapshot['meta']['status'] = 'imported'
     save_job_meta(snapshot['meta'])
     return jsonify(
         {
@@ -1123,12 +1235,30 @@ def verify_assessor_batch(job_id):
         'cache_hits': cache_hits,
         'completed_at': datetime.now().isoformat(),
     }
-    persist_artifact(job_id, 'assessor', verified_filename, verified_path)
-    save_job_meta(meta)
 
     counts = {}
-    for item in results:
-        counts[item['decision']] = counts.get(item['decision'], 0) + 1
+    decisions = (
+        leads['Current Owner Verification']
+        .fillna('Not checked')
+        .astype(str)
+    )
+    remaining = int(decisions.isin(('', 'Not checked', 'nan')).sum())
+    checked = int(len(leads) - remaining)
+    for decision, count in decisions.value_counts().to_dict().items():
+        if decision not in ('', 'Not checked', 'nan'):
+            counts[str(decision)] = int(count)
+    meta['assessor_progress'] = {
+        'checked': checked,
+        'total': int(len(leads)),
+        'remaining': remaining,
+        'decision_counts': counts,
+    }
+    meta['status'] = (
+        'ready_for_approval' if remaining == 0
+        else 'assessor_in_progress'
+    )
+    save_job_meta(meta)
+    persist_artifact(job_id, 'assessor', verified_filename, verified_path)
     return jsonify(
         {
             'success': True,
@@ -1137,13 +1267,8 @@ def verify_assessor_batch(job_id):
             'counts': counts,
             'results': results,
             'download_file': verified_filename,
-            'remaining_estimate': int(
-                leads['Current Owner Verification']
-                .fillna('Not checked')
-                .astype(str)
-                .isin(('', 'Not checked', 'nan'))
-                .sum()
-            ),
+            'remaining_estimate': remaining,
+            'job': processing_job_snapshot(meta),
         }
     )
 

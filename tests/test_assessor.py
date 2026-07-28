@@ -140,8 +140,12 @@ class AssessorTest(unittest.TestCase):
 
         self.assertEqual(first['processed'], 2)
         self.assertEqual(first['remaining_estimate'], 1)
+        self.assertEqual(first['job']['status'], 'assessor_in_progress')
+        self.assertEqual(first['job']['assessor']['checked'], 2)
         self.assertEqual(second['processed'], 1)
         self.assertEqual(second['remaining_estimate'], 0)
+        self.assertEqual(second['job']['status'], 'ready_for_approval')
+        self.assertEqual(second['job']['progress'], 90)
         self.assertEqual(FakeAssessorClient.calls, 3)
         self.assertTrue(
             os.path.exists(
