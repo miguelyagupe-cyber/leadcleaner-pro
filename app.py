@@ -34,6 +34,7 @@ from crm import (
     CRMRepository,
 )
 from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads
+from research_plan import build_research_plan
 from assessor import (
     RETRYABLE_STATUSES,
     AssessorResult,
@@ -1254,6 +1255,7 @@ def api_lead_detail(lead_id):
     lead = get_crm().get_lead(lead_id)
     if not lead:
         return jsonify({'error': 'Lead not found'}), 404
+    lead['research_plan'] = build_research_plan(lead)
     return jsonify(lead)
 
 
