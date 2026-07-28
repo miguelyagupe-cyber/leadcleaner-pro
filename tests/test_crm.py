@@ -25,15 +25,15 @@ class CRMTest(unittest.TestCase):
             [
                 {
                     'Tax ID': 'A-100',
-                    'Owner Name': 'JANE DOE ESTATE OF',
+                    'Owner Name': 'TEST OWNER ALPHA ESTATE OF',
                     'TotalDue': 12500,
                     'Phone': '',
-                    'Address': 'PO BOX 100',
+                    'Address': 'TEST MAILING ADDRESS A',
                     'OWNR_ADDR 6': 'TULSA',
                     'OWNR_ADDR ST': 'OK',
-                    'ZIP': '74101',
-                    'ST_NO': '120',
-                    'ST_NAME': 'MAIN',
+                    'ZIP': '00000',
+                    'ST_NO': '100',
+                    'ST_NAME': 'SAMPLE',
                     'ST_STREET_TYPE': 'ST',
                     'ST_CITY': 'TULSA',
                     'Deceased Owner (Flagged)': 'YES - Verify',
@@ -41,15 +41,15 @@ class CRMTest(unittest.TestCase):
                 },
                 {
                     'Tax ID': 'B-200',
-                    'Owner Name': 'JOHN SMITH',
+                    'Owner Name': 'TEST OWNER BETA',
                     'TotalDue': 2300,
-                    'Phone': '9185550100',
-                    'Address': '200 E PINE ST',
+                    'Phone': '0000000000',
+                    'Address': 'TEST MAILING ADDRESS B',
                     'OWNR_ADDR 6': 'TULSA',
                     'OWNR_ADDR ST': 'OK',
-                    'ZIP': '74103',
+                    'ZIP': '00000',
                     'ST_NO': '200',
-                    'ST_NAME': 'PINE',
+                    'ST_NAME': 'EXAMPLE',
                     'ST_STREET_TYPE': 'ST',
                     'ST_CITY': 'TULSA',
                     'Deceased Owner (Flagged)': '',
@@ -91,7 +91,10 @@ class CRMTest(unittest.TestCase):
 
         self.assertEqual(all_leads['total'], 2)
         self.assertEqual(research['total'], 1)
-        self.assertEqual(all_leads['items'][0]['owner_name'], 'JANE DOE ESTATE OF')
+        self.assertEqual(
+            all_leads['items'][0]['owner_name'],
+            'TEST OWNER ALPHA ESTATE OF',
+        )
         self.assertEqual(all_leads['items'][0]['priority'], 'high')
         self.assertEqual(all_leads['items'][0]['status'], 'research_needed')
 
@@ -130,6 +133,136 @@ class CRMTest(unittest.TestCase):
     def test_health_reports_database_dialect(self):
         health = self.client.get('/api/health').get_json()
         self.assertEqual(health, {'status': 'ok', 'database': 'sqlite'})
+
+    def test_exact_confirmed_official_evidence_confirms_deceased(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        response = self.client.post(
+            f'/api/leads/{lead_id}/evidence',
+            json={
+                'evidence_type': 'probate_case',
+                'outcome': 'supports_deceased',
+                'confidence': 'confirmed',
+                'identity_match': 'exact',
+                'source_name': 'OSCN',
+                'source_url': (
+                    'https://www.oscn.net/dockets/'
+                    'GetCaseInformation.aspx?db=Tulsa&number=PB-2024-525'
+                ),
+                'case_number': 'PB-2024-525',
+                'subject_name': 'TEST OWNER ALPHA',
+                'notes': 'Property and representative matched manually.',
+            },
+        )
+        lead = response.get_json()['lead']
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(lead['evidence_summary']['confirmed'])
+        self.assertEqual(
+            lead['evidence_summary']['status'],
+            'confirmed_deceased',
+        )
+        self.assertEqual(lead['research_status'], 'verified')
+
+    def test_probable_identity_does_not_claim_confirmed_death(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        result = self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'probate_case',
+                'outcome': 'supports_deceased',
+                'confidence': 'confirmed',
+                'identity_match': 'probable',
+                'source_name': 'OSCN',
+                'case_number': 'PB-2024-999',
+            },
+        )
+
+        self.assertFalse(result['lead']['evidence_summary']['confirmed'])
+        self.assertEqual(
+            result['lead']['evidence_summary']['status'],
+            'probable_deceased',
+        )
+        self.assertEqual(result['lead']['research_status'], 'in_progress')
+
+    def test_confirmed_living_evidence_rejects_false_positive(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        result = self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'assessor_owner_change',
+                'outcome': 'supports_living',
+                'confidence': 'confirmed',
+                'identity_match': 'exact',
+                'source_name': 'Tulsa County Assessor',
+                'source_url': 'https://assessor.tulsacounty.org/',
+            },
+        )
+
+        self.assertEqual(
+            result['lead']['evidence_summary']['status'],
+            'false_positive',
+        )
+        self.assertEqual(result['lead']['research_status'], 'rejected')
+
+    def test_conflicting_confirmed_evidence_requires_manual_resolution(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        for outcome, evidence_type in (
+            ('supports_deceased', 'death_certificate'),
+            ('supports_living', 'assessor_owner_change'),
+        ):
+            self.repository.add_evidence(
+                lead_id,
+                {
+                    'evidence_type': evidence_type,
+                    'outcome': outcome,
+                    'confidence': 'confirmed',
+                    'identity_match': 'exact',
+                    'source_name': 'Official record',
+                },
+            )
+        lead = self.repository.get_lead(lead_id)
+
+        self.assertFalse(lead['evidence_summary']['confirmed'])
+        self.assertEqual(
+            lead['evidence_summary']['status'],
+            'conflicting_evidence',
+        )
+        self.assertEqual(lead['research_status'], 'in_progress')
+
+    def test_research_page_exposes_evidence_ledger(self):
+        response = self.client.get('/research')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Death & probate evidence', response.data)
+        self.assertIn(b'Identity match', response.data)
+        self.assertIn(b'Add evidence', response.data)
+
+    def test_retraction_preserves_record_and_removes_its_effect(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        added = self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'death_certificate',
+                'outcome': 'supports_deceased',
+                'confidence': 'confirmed',
+                'identity_match': 'exact',
+                'source_name': 'Official certificate',
+            },
+        )
+        response = self.client.delete(
+            (
+                f'/api/leads/{lead_id}/evidence/'
+                f"{added['evidence_id']}"
+            ),
+            json={'reason': 'Attached to a different person with the same name.'},
+        )
+        lead = response.get_json()['lead']
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(lead['evidence_summary']['status'], 'no_evidence')
+        self.assertEqual(lead['research_status'], 'unreviewed')
+        self.assertIsNotNone(lead['evidence'][0]['retracted_at'])
+        self.assertIn('different person', lead['evidence'][0]['retraction_reason'])
 
 
 if __name__ == '__main__':

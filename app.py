@@ -9,6 +9,10 @@ from datetime import datetime
 from crm import (
     CRM_PRIORITIES,
     CRM_STATUSES,
+    EVIDENCE_CONFIDENCE,
+    EVIDENCE_OUTCOMES,
+    EVIDENCE_TYPES,
+    IDENTITY_MATCHES,
     RESEARCH_STATUSES,
     CRMRepository,
 )
@@ -575,6 +579,10 @@ def leads_page():
         statuses=CRM_STATUSES,
         priorities=CRM_PRIORITIES,
         research_statuses=RESEARCH_STATUSES,
+        evidence_types=EVIDENCE_TYPES,
+        evidence_outcomes=EVIDENCE_OUTCOMES,
+        evidence_confidence=EVIDENCE_CONFIDENCE,
+        identity_matches=IDENTITY_MATCHES,
     )
 
 
@@ -586,6 +594,10 @@ def research_page():
         statuses=CRM_STATUSES,
         priorities=CRM_PRIORITIES,
         research_statuses=RESEARCH_STATUSES,
+        evidence_types=EVIDENCE_TYPES,
+        evidence_outcomes=EVIDENCE_OUTCOMES,
+        evidence_confidence=EVIDENCE_CONFIDENCE,
+        identity_matches=IDENTITY_MATCHES,
     )
 
 
@@ -640,6 +652,37 @@ def api_add_lead_note(lead_id):
     if not note:
         return jsonify({'error': 'Lead not found'}), 404
     return jsonify({'success': True, 'note': note}), 201
+
+
+@app.route('/api/leads/<int:lead_id>/evidence', methods=['POST'])
+def api_add_lead_evidence(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = get_crm().add_evidence(lead_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not result:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, **result}), 201
+
+
+@app.route(
+    '/api/leads/<int:lead_id>/evidence/<int:evidence_id>',
+    methods=['DELETE'],
+)
+def api_retract_lead_evidence(lead_id, evidence_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        lead = get_crm().retract_evidence(
+            lead_id,
+            evidence_id,
+            payload.get('reason'),
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not lead:
+        return jsonify({'error': 'Lead or evidence not found'}), 404
+    return jsonify({'success': True, 'lead': lead})
 
 
 @app.route('/process', methods=['POST'])

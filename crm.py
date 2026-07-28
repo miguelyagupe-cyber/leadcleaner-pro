@@ -37,6 +37,19 @@ CRM_STATUSES = (
 
 CRM_PRIORITIES = ('urgent', 'high', 'medium', 'normal')
 RESEARCH_STATUSES = ('unreviewed', 'in_progress', 'verified', 'rejected')
+EVIDENCE_TYPES = (
+    'probate_case',
+    'death_index',
+    'death_certificate',
+    'obituary',
+    'assessor_owner_change',
+    'estate_text',
+    'skip_trace_mismatch',
+    'other',
+)
+EVIDENCE_OUTCOMES = ('supports_deceased', 'supports_living', 'inconclusive')
+EVIDENCE_CONFIDENCE = ('confirmed', 'strong', 'weak', 'rejected')
+IDENTITY_MATCHES = ('exact', 'probable', 'uncertain', 'mismatch')
 
 
 def utc_now():
@@ -144,6 +157,32 @@ class LeadActivity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ResearchEvidence(Base):
+    __tablename__ = 'research_evidence'
+    __table_args__ = (
+        Index('idx_evidence_lead', 'lead_id'),
+        Index('idx_evidence_outcome', 'outcome'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey('leads.id', ondelete='CASCADE'), nullable=False
+    )
+    evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(40), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(30), nullable=False)
+    identity_match: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    case_number: Mapped[str | None] = mapped_column(String(100))
+    subject_name: Mapped[str | None] = mapped_column(Text)
+    event_date: Mapped[str | None] = mapped_column(String(30))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retraction_reason: Mapped[str | None] = mapped_column(Text)
+
+
 class AssessorVerification(Base):
     __tablename__ = 'assessor_verifications'
     __table_args__ = (Index('idx_assessor_status', 'status'),)
@@ -163,6 +202,71 @@ def _as_dict(instance):
     return {
         column.name: getattr(instance, column.name)
         for column in instance.__table__.columns
+    }
+
+
+def summarize_evidence(items):
+    items = [item for item in items if not item.retracted_at]
+    if not items:
+        return {
+            'status': 'no_evidence',
+            'label': 'No evidence',
+            'confirmed': False,
+            'reason': 'No research evidence has been recorded',
+        }
+    living = [
+        item for item in items
+        if item.outcome == 'supports_living'
+        and item.confidence == 'confirmed'
+        and item.identity_match in ('exact', 'probable')
+    ]
+    official_death_types = {'probate_case', 'death_index', 'death_certificate'}
+    confirmed = [
+        item for item in items
+        if item.outcome == 'supports_deceased'
+        and item.confidence == 'confirmed'
+        and item.identity_match == 'exact'
+        and item.evidence_type in official_death_types
+    ]
+    if living and confirmed:
+        return {
+            'status': 'conflicting_evidence',
+            'label': 'Conflicting evidence',
+            'confirmed': False,
+            'reason': 'Confirmed living and death evidence require manual resolution',
+        }
+    if living:
+        return {
+            'status': 'false_positive',
+            'label': 'False positive',
+            'confirmed': False,
+            'reason': 'Confirmed evidence supports that the matched person is living',
+        }
+    if confirmed:
+        return {
+            'status': 'confirmed_deceased',
+            'label': 'Confirmed deceased',
+            'confirmed': True,
+            'reason': 'Exact identity match supported by confirmed official evidence',
+        }
+    strong = [
+        item for item in items
+        if item.outcome == 'supports_deceased'
+        and item.confidence in ('confirmed', 'strong')
+        and item.identity_match in ('exact', 'probable')
+    ]
+    if strong:
+        return {
+            'status': 'probable_deceased',
+            'label': 'Probable deceased',
+            'confirmed': False,
+            'reason': 'Strong evidence exists but confirmation requirements are incomplete',
+        }
+    return {
+        'status': 'inconclusive',
+        'label': 'Inconclusive',
+        'confirmed': False,
+        'reason': 'Recorded evidence does not establish identity and death',
     }
 
 
@@ -457,10 +561,17 @@ class CRMRepository:
                 .where(LeadActivity.lead_id == lead_id)
                 .order_by(LeadActivity.created_at.desc())
             ).all()
+            evidence = session.scalars(
+                select(ResearchEvidence)
+                .where(ResearchEvidence.lead_id == lead_id)
+                .order_by(ResearchEvidence.created_at.desc())
+            ).all()
             return {
                 **_as_dict(lead),
                 'notes': [_as_dict(note) for note in notes],
                 'activity': [_as_dict(item) for item in activity],
+                'evidence': [_as_dict(item) for item in evidence],
+                'evidence_summary': summarize_evidence(evidence),
             }
 
     def update_lead(self, lead_id, changes):
@@ -526,6 +637,121 @@ class CRMRepository:
                 )
             )
         return {'id': note_id, 'lead_id': lead_id, 'body': body, 'created_at': now}
+
+    def add_evidence(self, lead_id, payload):
+        evidence_type = str(payload.get('evidence_type', '')).strip()
+        outcome = str(payload.get('outcome', '')).strip()
+        confidence = str(payload.get('confidence', '')).strip()
+        identity_match = str(payload.get('identity_match', '')).strip()
+        source_name = str(payload.get('source_name', '')).strip()
+        if evidence_type not in EVIDENCE_TYPES:
+            raise ValueError('Invalid evidence type')
+        if outcome not in EVIDENCE_OUTCOMES:
+            raise ValueError('Invalid evidence outcome')
+        if confidence not in EVIDENCE_CONFIDENCE:
+            raise ValueError('Invalid evidence confidence')
+        if identity_match not in IDENTITY_MATCHES:
+            raise ValueError('Invalid identity match')
+        if not source_name:
+            raise ValueError('Evidence source is required')
+
+        source_url = str(payload.get('source_url', '')).strip() or None
+        if source_url and not source_url.startswith(('https://', 'http://')):
+            raise ValueError('Evidence URL must start with http:// or https://')
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            if not lead:
+                return None
+            evidence = ResearchEvidence(
+                lead_id=lead_id,
+                evidence_type=evidence_type,
+                outcome=outcome,
+                confidence=confidence,
+                identity_match=identity_match,
+                source_name=source_name,
+                source_url=source_url,
+                case_number=str(payload.get('case_number', '')).strip() or None,
+                subject_name=str(payload.get('subject_name', '')).strip() or None,
+                event_date=str(payload.get('event_date', '')).strip() or None,
+                notes=str(payload.get('notes', '')).strip() or None,
+                created_at=now,
+            )
+            session.add(evidence)
+            session.flush()
+            evidence_id = evidence.id
+            session.add(
+                LeadActivity(
+                    lead_id=lead_id,
+                    activity_type='evidence_added',
+                    detail=(
+                        f"Evidence added: {evidence_type.replace('_', ' ')} "
+                        f"({outcome.replace('_', ' ')})"
+                    ),
+                    created_at=now,
+                )
+            )
+            all_evidence = session.scalars(
+                select(ResearchEvidence).where(
+                    ResearchEvidence.lead_id == lead_id
+                )
+            ).all()
+            summary = summarize_evidence(all_evidence)
+            if summary['confirmed']:
+                lead.research_status = 'verified'
+            elif summary['status'] == 'false_positive':
+                lead.research_status = 'rejected'
+            else:
+                lead.research_status = 'in_progress'
+            lead.updated_at = now
+        detail = self.get_lead(lead_id)
+        return {
+            'evidence_id': evidence_id,
+            'lead': detail,
+        }
+
+    def retract_evidence(self, lead_id, evidence_id, reason):
+        reason = str(reason or '').strip()
+        if not reason:
+            raise ValueError('Retraction reason is required')
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            if not lead:
+                return None
+            evidence = session.get(ResearchEvidence, evidence_id)
+            if not evidence or evidence.lead_id != lead_id:
+                return None
+            if not evidence.retracted_at:
+                evidence.retracted_at = now
+                evidence.retraction_reason = reason
+                session.add(
+                    LeadActivity(
+                        lead_id=lead_id,
+                        activity_type='evidence_retracted',
+                        detail=(
+                            f"Evidence retracted: "
+                            f"{evidence.evidence_type.replace('_', ' ')}"
+                        ),
+                        created_at=now,
+                    )
+                )
+            active = session.scalars(
+                select(ResearchEvidence).where(
+                    ResearchEvidence.lead_id == lead_id
+                )
+            ).all()
+            summary = summarize_evidence(active)
+            if summary['confirmed']:
+                lead.research_status = 'verified'
+            elif summary['status'] == 'false_positive':
+                lead.research_status = 'rejected'
+            elif summary['status'] == 'no_evidence':
+                lead.research_status = 'unreviewed'
+            else:
+                lead.research_status = 'in_progress'
+            lead.updated_at = now
+        return self.get_lead(lead_id)
 
     def dashboard_metrics(self):
         active_research = (
