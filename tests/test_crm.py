@@ -122,6 +122,14 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(detail['research_status'], 'verified')
         self.assertEqual(detail['notes'][0]['body'], 'Probate record verified in county research.')
         self.assertGreaterEqual(len(detail['activity']), 4)
+        self.assertEqual(
+            detail['research_plan']['status'],
+            'Unconfirmed — research required',
+        )
+        self.assertEqual(
+            detail['research_plan']['sources'][0]['source_name'],
+            'OSCN',
+        )
 
     def test_dashboard_metrics_are_derived_from_crm(self):
         metrics = self.repository.dashboard_metrics()
@@ -325,6 +333,7 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Death & probate evidence', response.data)
         self.assertIn(b'Identity match', response.data)
         self.assertIn(b'Add evidence', response.data)
+        self.assertIn(b'Prepare evidence', response.data)
 
     def test_today_page_exposes_call_and_follow_up_workspace(self):
         response = self.client.get('/today')
