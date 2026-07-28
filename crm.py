@@ -37,6 +37,17 @@ CRM_STATUSES = (
 )
 
 CRM_PRIORITIES = ('urgent', 'high', 'medium', 'normal')
+PIPELINE_STAGES = (
+    'new',
+    'research_needed',
+    'contact_ready',
+    'attempted_contact',
+    'interested',
+    'appointment_scheduled',
+    'negotiation',
+    'contract_pending',
+    'closed',
+)
 RESEARCH_STATUSES = ('unreviewed', 'in_progress', 'verified', 'rejected')
 EVIDENCE_TYPES = (
     'probate_case',
@@ -1090,4 +1101,52 @@ class CRMRepository:
             'contacts_found': contacts,
             'overdue_follow_ups': overdue,
             'follow_ups_due': due_today,
+        }
+
+    def pipeline_board(self, cards_per_stage=50):
+        cards_per_stage = min(max(int(cards_per_stage), 1), 100)
+        priority_order = case(
+            (Lead.priority == 'urgent', 0),
+            (Lead.priority == 'high', 1),
+            (Lead.priority == 'medium', 2),
+            else_=3,
+        )
+        stages = []
+        with self.Session() as session:
+            for status in PIPELINE_STAGES:
+                count, debt = session.execute(
+                    select(
+                        func.count(Lead.id),
+                        func.coalesce(func.sum(Lead.total_due), 0),
+                    ).where(Lead.status == status)
+                ).one()
+                leads = session.scalars(
+                    select(Lead)
+                    .where(Lead.status == status)
+                    .order_by(
+                        priority_order,
+                        Lead.next_follow_up.asc(),
+                        Lead.total_due.desc(),
+                        Lead.id.desc(),
+                    )
+                    .limit(cards_per_stage)
+                ).all()
+                stages.append(
+                    {
+                        'status': status,
+                        'count': int(count),
+                        'total_debt': float(debt),
+                        'items': [_as_dict(lead) for lead in leads],
+                    }
+                )
+            disqualified = session.scalar(
+                select(func.count())
+                .select_from(Lead)
+                .where(Lead.status == 'disqualified')
+            ) or 0
+        return {
+            'stages': stages,
+            'disqualified': int(disqualified),
+            'cards_per_stage': cards_per_stage,
+            'generated_at': utc_now().isoformat(),
         }

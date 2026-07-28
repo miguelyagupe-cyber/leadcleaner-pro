@@ -134,6 +134,18 @@ The `Today` workspace lists active follow-ups due today or overdue, oldest
 first. Call history remains attached to the lead even when the lead later
 changes status.
 
+## Visual acquisition pipeline
+
+The Pipeline workspace groups active opportunities into nine operational
+stages from `New` through `Closed`. Each column shows its lead count and total
+delinquent debt; cards show owner, property, priority, phone readiness, debt,
+and follow-up date.
+
+Daryl can move a card by drag-and-drop or with its accessible stage selector.
+Every move uses the normal CRM status update path and is written to the lead's
+activity history. Large stages show the highest-priority 50 cards while keeping
+the complete stage count and debt total visible.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:
