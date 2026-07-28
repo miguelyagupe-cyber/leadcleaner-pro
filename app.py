@@ -949,6 +949,11 @@ def reports_page():
     return render_template('reports.html')
 
 
+@app.route('/enrichment')
+def enrichment_page():
+    return render_template('enrichment.html')
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -1011,6 +1016,67 @@ def api_properties():
 @app.route('/api/reports/acquisition')
 def api_acquisition_report():
     return jsonify(get_crm().acquisition_report())
+
+
+@app.route('/api/enrichment')
+def api_enrichment_summary():
+    return jsonify(get_crm().enrichment_summary())
+
+
+@app.route('/api/enrichment/batches', methods=['POST'])
+def api_create_enrichment_batch():
+    payload = request.get_json(silent=True) or {}
+    try:
+        batch = get_crm().create_enrichment_batch(
+            provider=payload.get('provider'),
+            cost_per_record=payload.get('cost_per_record'),
+            budget_cap=payload.get('budget_cap'),
+            max_records=payload.get('max_records', 5000),
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    return jsonify({'success': True, 'batch': batch}), 201
+
+
+@app.route('/api/enrichment/batches/<batch_id>/export')
+def api_export_enrichment_batch(batch_id):
+    batch = get_crm().get_enrichment_batch(batch_id, include_leads=True)
+    if not batch:
+        return jsonify({'error': 'Enrichment batch not found'}), 404
+    content = pd.DataFrame(batch['leads']).to_csv(index=False).encode('utf-8')
+    return send_file(
+        io.BytesIO(content),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'{batch_id}_enrichment_request.csv',
+    )
+
+
+@app.route('/api/enrichment/batches/<batch_id>/results', methods=['POST'])
+def api_import_enrichment_results(batch_id):
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'A CSV or Excel result file is required'}), 400
+    extension = os.path.splitext(file.filename)[1].lower()
+    try:
+        if extension == '.csv':
+            dataframe = pd.read_csv(file)
+        elif extension in ('.xlsx', '.xls'):
+            dataframe = pd.read_excel(file)
+        else:
+            return jsonify({'error': 'Result file must be CSV or Excel'}), 400
+    except Exception:
+        return jsonify({'error': 'Could not read enrichment result file'}), 400
+    try:
+        batch = get_crm().apply_enrichment_results(
+            batch_id,
+            dataframe.fillna('').to_dict(orient='records'),
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not batch:
+        return jsonify({'error': 'Enrichment batch not found'}), 404
+    return jsonify({'success': True, 'batch': batch})
 
 
 @app.route('/api/health')
