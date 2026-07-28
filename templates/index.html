@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Private lead intelligence workspace for Tulsa County real estate acquisitions.">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>LeadCleaner Pro · Daryl's Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -103,6 +104,8 @@
     .avatar { width: 30px; height: 30px; border-radius: 50%; background: #222329; border: 1px solid #34353a; display: grid; place-items: center; color: var(--gold); font-size: 11px; font-weight: 600; }
     .workspace-user strong { display: block; font-size: 12px; font-weight: 500; }
     .workspace-user small { color: var(--dim); font-size: 10px; }
+    .logout { margin-left:auto; padding:5px 7px; border:0; background:transparent; color:var(--dim); font-size:10px; cursor:pointer; }
+    .logout:hover { color:var(--gold); }
 
     main { grid-column: 2; min-width: 0; }
     .topbar {
@@ -301,7 +304,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="workspace-user"><div class="avatar">DM</div><div><strong>Daryl Moore</strong><small>Tulsa acquisitions</small></div></div>
+        <div class="workspace-user"><div class="avatar">DM</div><div><strong>Daryl Moore</strong><small>Tulsa acquisitions</small></div><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="logout" type="submit">Sign out</button></form></div>
       </div>
     </aside>
 
@@ -385,6 +388,16 @@
     const nf = new Intl.NumberFormat('en-US');
     let currentJobId = null;
     let currentApprovalToken = null;
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (resource, options = {}) => {
+      const method = String(options.method || 'GET').toUpperCase();
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+        options.headers = new Headers(options.headers || {});
+        options.headers.set('X-CSRF-Token', csrfToken);
+      }
+      return nativeFetch(resource, options);
+    };
 
     function showToast(message) {
       const toast = $('toast');

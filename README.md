@@ -166,6 +166,28 @@ are cumulative, so verification can continue safely across sessions, devices,
 restarts, or deploys. Failed uploads are retained with an error state instead
 of disappearing from the operational history.
 
+### Private Render access
+
+The production workspace is locked by default. Configure these Render
+environment variables before deploying this version:
+
+```text
+APP_LOGIN_EMAIL=daryl@example.com
+APP_LOGIN_PASSWORD=<a unique password shared privately with Daryl>
+SECRET_KEY=<a long random value>
+```
+
+Generate `SECRET_KEY` locally with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Never place those values in GitHub, screenshots, PRs, or application logs.
+Authentication uses a 12-hour secure session cookie, CSRF validation on every
+mutation, and rate limiting after repeated failed sign-in attempts. The health
+endpoint remains public so Render can verify the service without credentials.
+
 The health endpoint confirms which database engine is active without exposing
 credentials:
 

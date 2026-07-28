@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Private access to LeadCleaner Pro.">
+  <title>Private Access · LeadCleaner Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme:dark; --bg:#09090a; --surface:#111214; --border:#292a2f; --gold:#c7a251; --text:#f1eee7; --muted:#96979d; --red:#d8665c; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:radial-gradient(circle at 50% 15%,rgba(199,162,81,.08),transparent 32%),var(--bg); color:var(--text); font:14px "DM Sans",system-ui,sans-serif; }
+    .access { width:min(100%,420px); }
+    .brand { display:flex; align-items:center; justify-content:center; gap:12px; margin-bottom:38px; }
+    .mark { width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--gold); color:var(--gold); font:18px "Newsreader",serif; transform:rotate(45deg); }
+    .mark span { transform:rotate(-45deg); }
+    .brand strong { display:block; font-size:14px; }
+    .brand small { color:#686970; font-size:9px; letter-spacing:.15em; text-transform:uppercase; }
+    .card { padding:34px; border:1px solid var(--border); border-radius:7px; background:rgba(17,18,20,.96); box-shadow:0 28px 80px rgba(0,0,0,.38); }
+    .eyebrow { color:var(--gold); font-size:9px; font-weight:600; letter-spacing:.17em; text-transform:uppercase; }
+    h1 { margin:10px 0 8px; font:30px/1.1 "Newsreader",serif; font-weight:400; }
+    .intro { margin:0 0 26px; color:var(--muted); font-size:12px; line-height:1.65; }
+    label { display:block; margin:16px 0 7px; color:#b8b8bc; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+    input { width:100%; height:43px; padding:0 13px; border:1px solid #323339; border-radius:4px; outline:0; background:#0d0e10; color:var(--text); font:13px "DM Sans",sans-serif; }
+    input:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(199,162,81,.08); }
+    button { width:100%; height:43px; margin-top:23px; border:1px solid var(--gold); border-radius:4px; background:var(--gold); color:#111; font:600 12px "DM Sans",sans-serif; cursor:pointer; }
+    .error,.setup { margin:0 0 18px; padding:11px 12px; border-radius:4px; font-size:11px; line-height:1.5; }
+    .error { border:1px solid rgba(216,102,92,.35); background:rgba(216,102,92,.08); color:#e9aaa4; }
+    .setup { border:1px solid rgba(199,162,81,.35); background:rgba(199,162,81,.08); color:#d7c08c; }
+    .privacy { margin:18px 0 0; color:#66676e; font-size:10px; text-align:center; }
+  </style>
+</head>
+<body>
+  <main class="access">
+    <div class="brand"><div class="mark"><span>L</span></div><div><strong>LeadCleaner Pro</strong><small>Tulsa Acquisition Intelligence</small></div></div>
+    <section class="card">
+      <div class="eyebrow">Private workspace</div>
+      <h1>Welcome back, Daryl.</h1>
+      <p class="intro">Sign in to continue owner verification, probate research and acquisition follow-up.</p>
+      {% if not configured %}<div class="setup">Private access is locked until the server administrator configures the Render secrets.</div>{% endif %}
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+      <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required autofocus>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Enter private workspace</button>
+      </form>
+    </section>
+    <p class="privacy">Protected access · Session expires after 12 hours</p>
+  </main>
+</body>
+</html>
