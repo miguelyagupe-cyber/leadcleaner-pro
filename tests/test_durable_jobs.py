@@ -117,6 +117,28 @@ class DurableProcessingJobsTest(unittest.TestCase):
         self.assertEqual(payload['latest_job']['id'], job_id)
         self.assertTrue(payload['latest_job']['download_available'])
 
+    def test_job_endpoint_exposes_resumable_workflow_state(self):
+        job_id, _, _ = self._create_verified_job()
+        meta = load_job_meta(job_id)
+        meta['status'] = 'assessor_in_progress'
+        meta['assessor_progress'] = {
+            'checked': 25,
+            'total': 100,
+            'remaining': 75,
+            'decision_counts': {'Verified candidate': 8},
+        }
+        save_job_meta(meta)
+
+        response = self.client.get(f'/api/jobs/{job_id}')
+        job = response.get_json()['job']
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(job['status'], 'assessor_in_progress')
+        self.assertEqual(job['progress'], 64)
+        self.assertEqual(job['assessor']['remaining'], 75)
+        self.assertTrue(job['actions']['verify_assessor'])
+        self.assertTrue(job['actions']['preview_approval'])
+
 
 if __name__ == '__main__':
     unittest.main()

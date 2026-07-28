@@ -206,6 +206,12 @@
     .recent-table tr:last-child td { border-bottom: 0; }
     .job-name { color: var(--text); font-weight: 500; }
     .download-link { color: var(--gold); }
+    .job-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .job-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #777a82; }
+    .job-status.imported::before, .job-status.ready_for_approval::before { background: var(--gold); }
+    .job-status.assessor_in_progress::before, .job-status.qualification_ready::before { background: #d4b86f; }
+    .job-status.failed::before { background: #b85c5c; }
+    .resume-link { margin-left: 10px; border: 0; padding: 0; background: transparent; color: var(--text); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
     .table-empty { padding: 30px 20px !important; color: var(--dim) !important; text-align: center; }
 
     .primary-button { min-height: 38px; padding: 0 15px; border: 1px solid var(--gold); border-radius: 4px; background: var(--gold); color: #101011; font-size: 10px; font-weight: 600; letter-spacing: .04em; cursor: pointer; }
@@ -348,7 +354,7 @@
 
           <article class="panel recent-panel">
             <div class="panel-header"><div><div class="panel-title">Recent list processing</div><div class="panel-subtitle">Every metric links back to its source file</div></div><button class="panel-link" data-action="import">New import</button></div>
-            <table class="recent-table"><thead><tr><th>Run</th><th>Tax year</th><th>Clean leads</th><th>Deceased</th><th>Research</th><th>Completed</th><th>Output</th></tr></thead><tbody id="recent-jobs"><tr><td colspan="7" class="table-empty">No completed processing runs yet.</td></tr></tbody></table>
+            <table class="recent-table"><thead><tr><th>Run</th><th>Tax year</th><th>Clean leads</th><th>Deceased</th><th>Research</th><th>Workflow</th><th>Action</th></tr></thead><tbody id="recent-jobs"><tr><td colspan="7" class="table-empty">No processing runs yet.</td></tr></tbody></table>
           </article>
         </section>
       </div>
@@ -539,6 +545,42 @@
     }
     $('approve-crm-import').addEventListener('click', approveCrmImport);
 
+    async function resumeJob(jobId) {
+      try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Job could not be restored.');
+        const job = result.job;
+        currentJobId = job.id;
+        currentApprovalToken = null;
+        $('error-box').style.display = 'none';
+        $('progress').style.display = 'none';
+        $('modal-actions').style.display = 'none';
+        $('result-box').style.display = 'block';
+        $('result-copy').textContent = `${job.status_label} · ${nf.format(job.assessor.checked)} of ${nf.format(job.assessor.total)} current owners checked · ${nf.format(job.assessor.remaining)} remaining.`;
+        $('download-result').href = job.output_filename ? `/download/${encodeURIComponent(job.output_filename)}` : '#';
+        $('download-result').style.display = job.download_available ? 'inline-grid' : 'none';
+        $('download-result').textContent = job.status === 'qualification_ready' ? 'Download qualification workbook' : 'Download latest workbook';
+        const verify = $('verify-assessor');
+        verify.style.display = job.actions.verify_assessor ? 'inline-block' : 'none';
+        verify.disabled = !job.actions.verify_assessor;
+        verify.textContent = job.status === 'assessor_in_progress' ? 'Verify next 25 owners' : 'Verify 25 current owners';
+        $('verification-result').textContent = job.actions.verify_assessor
+          ? `Progress is saved. ${nf.format(job.assessor.remaining)} owner records remain.`
+          : job.status === 'ready_for_approval'
+            ? 'Assessor verification is complete.'
+            : job.status === 'imported'
+              ? 'This verified run has been imported into the CRM.'
+              : (job.error || '');
+        $('approve-crm-import').style.display = 'none';
+        $('approval-result').textContent = '';
+        modal.classList.add('open');
+        if (job.actions.preview_approval) await loadApprovalPreview();
+      } catch (error) {
+        showToast(error.message);
+      }
+    }
+
     function attentionIcon(type) {
       if (type === 'deceased') return '✓';
       if (type === 'research') return '⌕';
@@ -561,9 +603,13 @@
       $('recent-jobs').innerHTML = jobs.map((job, index) => {
         const stats = job.stats || {};
         const research = stats.review ?? ((stats.absentee_signal_strong || 0) + (stats.absentee_signal_weak || 0));
-        const output = job.download_available ? `<a class="download-link" href="/download/${encodeURIComponent(job.output_filename)}">Download</a>` : 'Unavailable';
-        return `<tr><td class="job-name">${index === 0 ? 'Latest county run' : `Processing run ${jobs.length-index}`}</td><td>${job.tax_year || '—'}</td><td>${nf.format(stats.final || 0)}</td><td>${nf.format(stats.deceased_flagged || 0)}</td><td>${nf.format(research)}</td><td>${job.completed_label}</td><td>${output}</td></tr>`;
+        const output = job.download_available ? `<a class="download-link" href="/download/${encodeURIComponent(job.output_filename)}">Download</a>` : '';
+        const resume = `<button class="resume-link" data-resume-job="${job.id}">${job.status === 'imported' ? 'View' : 'Resume'}</button>`;
+        return `<tr><td class="job-name">${index === 0 ? 'Latest county run' : `Processing run ${jobs.length-index}`}</td><td>${job.tax_year || '—'}</td><td>${nf.format(stats.final || 0)}</td><td>${nf.format(stats.deceased_flagged || 0)}</td><td>${nf.format(research)}</td><td><span class="job-status ${job.status || ''}">${job.status_label || 'Qualified'}</span></td><td>${output}${resume}</td></tr>`;
       }).join('');
+      $('recent-jobs').querySelectorAll('[data-resume-job]').forEach(button => {
+        button.addEventListener('click', () => resumeJob(button.dataset.resumeJob));
+      });
     }
 
     async function loadDashboard() {
