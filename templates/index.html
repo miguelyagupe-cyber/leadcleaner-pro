@@ -363,7 +363,7 @@
         <div class="field"><label for="tax-year">Target tax year</label><input type="number" id="tax-year" value="2023" min="2000" max="2099"></div>
         <div class="progress" id="progress"><div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div><div class="progress-label" id="progress-label">Preparing import…</div></div>
         <div class="error" id="error-box"></div>
-        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download qualification workbook</a><button class="secondary-button" id="verify-assessor" type="button">Verify 25 current owners</button></div><p id="verification-result" class="muted"></p></div>
+        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download qualification workbook</a><button class="secondary-button" id="verify-assessor" type="button">Verify 25 current owners</button><button class="secondary-button" id="approve-crm-import" type="button" style="display:none;">Approve verified candidates</button></div><p id="verification-result" class="muted"></p><p id="approval-result" class="muted"></p></div>
         <div class="modal-actions" id="modal-actions"><button class="secondary-button" id="cancel-import">Cancel</button><button class="primary-button" id="process-button" disabled>Process list</button></div>
       </div>
     </div>
@@ -378,6 +378,7 @@
     const processButton = $('process-button');
     const nf = new Intl.NumberFormat('en-US');
     let currentJobId = null;
+    let currentApprovalToken = null;
 
     function showToast(message) {
       const toast = $('toast');
@@ -451,6 +452,9 @@
         currentJobId = result.job_id;
         $('verify-assessor').disabled = false;
         $('verification-result').textContent = 'Assessor verification has not started.';
+        $('approval-result').textContent = 'CRM import remains locked until candidates pass Assessor verification.';
+        $('approve-crm-import').style.display = 'none';
+        currentApprovalToken = null;
         $('result-box').style.display = 'block';
         setTimeout(loadDashboard, 300);
       } catch (error) {
@@ -485,6 +489,7 @@
         $('download-result').textContent = 'Download Assessor-verified workbook';
         button.textContent = result.remaining_estimate ? 'Verify next 25 owners' : 'Assessor verification complete';
         button.disabled = !result.remaining_estimate;
+        await loadApprovalPreview();
       } catch (error) {
         $('verification-result').textContent = error.message;
         button.textContent = 'Retry Assessor verification';
@@ -492,6 +497,47 @@
       }
     }
     $('verify-assessor').addEventListener('click', verifyAssessorBatch);
+
+    async function loadApprovalPreview() {
+      if (!currentJobId) return;
+      const response = await fetch(`/api/import/${encodeURIComponent(currentJobId)}/preview`);
+      const result = await response.json();
+      if (!response.ok || !result.success) return;
+      currentApprovalToken = result.approval_token;
+      const button = $('approve-crm-import');
+      button.style.display = result.approved_candidates ? 'inline-block' : 'none';
+      button.disabled = result.already_committed && !result.approved_candidates;
+      $('approval-result').textContent = `${nf.format(result.approved_candidates)} verified candidates are eligible for explicit CRM import · ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(result.total_debt || 0)} total delinquent debt.${result.already_committed ? ` ${nf.format(result.previously_imported)} were previously imported.` : ''}`;
+    }
+
+    async function approveCrmImport() {
+      if (!currentJobId || !currentApprovalToken) return;
+      if (!window.confirm('Import only the currently verified candidates into the CRM? Review and unresolved records will remain excluded.')) return;
+      const button = $('approve-crm-import');
+      button.disabled = true;
+      button.textContent = 'Importing approved candidates…';
+      try {
+        const response = await fetch(`/api/import/${encodeURIComponent(currentJobId)}/commit`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            approval_token:currentApprovalToken,
+            confirmation:'IMPORT VERIFIED CANDIDATES'
+          })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'CRM import failed.');
+        $('approval-result').textContent = `${nf.format(result.imported)} candidates imported · ${nf.format(result.duplicates_skipped)} duplicates skipped · ${nf.format(result.crm_total)} total CRM leads.`;
+        button.textContent = 'Approved candidates imported';
+        currentApprovalToken = null;
+        await loadDashboard();
+      } catch (error) {
+        $('approval-result').textContent = error.message;
+        button.textContent = 'Retry approved import';
+        button.disabled = false;
+      }
+    }
+    $('approve-crm-import').addEventListener('click', approveCrmImport);
 
     function attentionIcon(type) {
       if (type === 'deceased') return '✓';
