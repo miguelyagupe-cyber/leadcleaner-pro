@@ -1259,3 +1259,176 @@ class CRMRepository:
                 'missing). Values come from the most recently updated record.'
             ),
         }
+
+    def acquisition_report(self):
+        """Build a transparent operational report from persisted CRM facts."""
+        today = date.today().isoformat()
+        with self.Session() as session:
+            all_leads = session.scalars(
+                select(Lead).order_by(Lead.updated_at.desc(), Lead.id.desc())
+            ).all()
+            evidence = session.scalars(
+                select(ResearchEvidence)
+                .order_by(ResearchEvidence.created_at.desc())
+            ).all()
+            call_rows = session.execute(
+                select(CallLog.outcome, func.count(CallLog.id))
+                .group_by(CallLog.outcome)
+            ).all()
+            import_count = session.scalar(
+                select(func.count()).select_from(ImportRun)
+            ) or 0
+
+        current_by_property = {}
+        for lead in all_leads:
+            identity = (
+                f"tax:{lead.tax_id.strip().upper()}"
+                if lead.tax_id and lead.tax_id.strip()
+                else (
+                    f"address:{(lead.property_address or '').strip().upper()}|"
+                    f"{(lead.property_city or '').strip().upper()}"
+                )
+            )
+            current_by_property.setdefault(identity, lead)
+        leads = list(current_by_property.values())
+
+        evidence_by_lead = {}
+        for item in evidence:
+            evidence_by_lead.setdefault(item.lead_id, []).append(item)
+        evidence_summaries = {
+            lead.id: summarize_evidence(evidence_by_lead.get(lead.id, []))
+            for lead in leads
+        }
+
+        active = [
+            lead for lead in leads
+            if lead.status not in ('closed', 'disqualified')
+        ]
+        contactable = [
+            lead for lead in active if lead.phone or lead.email
+        ]
+        follow_ups_due = [
+            lead for lead in active
+            if lead.next_follow_up and lead.next_follow_up <= today
+        ]
+        overdue = [
+            lead for lead in active
+            if lead.next_follow_up and lead.next_follow_up < today
+        ]
+        confirmed_deceased = sum(
+            1 for summary in evidence_summaries.values()
+            if summary['confirmed']
+        )
+        conflicting_evidence = sum(
+            1 for summary in evidence_summaries.values()
+            if summary['status'] == 'conflicting_evidence'
+        )
+        total_debt = sum(float(lead.total_due or 0) for lead in active)
+        contact_rate = (
+            round(len(contactable) / len(active) * 100, 1)
+            if active else 0
+        )
+
+        stages = {
+            status: {'status': status, 'count': 0, 'total_debt': 0.0}
+            for status in CRM_STATUSES
+        }
+        for lead in leads:
+            stages[lead.status]['count'] += 1
+            stages[lead.status]['total_debt'] += float(lead.total_due or 0)
+
+        research = {status: 0 for status in RESEARCH_STATUSES}
+        for lead in leads:
+            research[lead.research_status] += 1
+        calls = {outcome: 0 for outcome in CALL_OUTCOMES}
+        calls.update({outcome: int(count) for outcome, count in call_rows})
+        priority_rank = {'urgent': 0, 'high': 1, 'medium': 2, 'normal': 3}
+        top_leads = sorted(
+            active,
+            key=lambda lead: (
+                priority_rank.get(lead.priority, 9),
+                not lead.deceased_flag,
+                -float(lead.total_due or 0),
+                -lead.id,
+            ),
+        )[:8]
+
+        actions = []
+        if follow_ups_due:
+            actions.append({
+                'priority': 'urgent' if overdue else 'high',
+                'title': 'Clear the follow-up queue',
+                'detail': (
+                    f"{len(follow_ups_due)} active follow-ups are due; "
+                    f"{len(overdue)} are overdue."
+                ),
+                'href': '/today',
+                'cta': 'Open Today',
+            })
+        missing_contacts = max(len(active) - len(contactable), 0)
+        if missing_contacts:
+            actions.append({
+                'priority': 'high',
+                'title': 'Close the contact-data gap',
+                'detail': (
+                    f"{missing_contacts} active leads have no phone or email "
+                    "saved in the CRM."
+                ),
+                'href': '/leads',
+                'cta': 'Review leads',
+            })
+        research_open = research['unreviewed'] + research['in_progress']
+        if research_open:
+            actions.append({
+                'priority': 'medium',
+                'title': 'Resolve evidence before outreach',
+                'detail': (
+                    f"{research_open} leads still need evidence review; "
+                    f"{conflicting_evidence} contain conflicting evidence."
+                ),
+                'href': '/research',
+                'cta': 'Open research',
+            })
+        if not actions:
+            actions.append({
+                'priority': 'normal',
+                'title': 'Pipeline is operationally clear',
+                'detail': 'No overdue follow-ups or open data gaps were found.',
+                'href': '/pipeline',
+                'cta': 'Review pipeline',
+            })
+
+        return {
+            'generated_at': utc_now().isoformat(),
+            'methodology': (
+                'This report uses the latest CRM record per property and '
+                'recorded activity. Repeated imports are not added together. '
+                'It does not estimate revenue, property value, or probability '
+                'of closing.'
+            ),
+            'summary': {
+                'active_leads': len(active),
+                'active_debt': total_debt,
+                'contactable_leads': len(contactable),
+                'contact_rate': contact_rate,
+                'follow_ups_due': len(follow_ups_due),
+                'overdue_follow_ups': len(overdue),
+                'confirmed_deceased': confirmed_deceased,
+                'conflicting_evidence': conflicting_evidence,
+                'imports': int(import_count),
+            },
+            'stages': [stages[status] for status in CRM_STATUSES],
+            'research': research,
+            'calls': calls,
+            'actions': actions,
+            'top_opportunities': [
+                {
+                    **{
+                        key: value for key, value in _as_dict(lead).items()
+                        if key != 'source_data_json'
+                    },
+                    'evidence_summary': evidence_summaries[lead.id],
+                }
+                for lead in top_leads
+            ],
+        }

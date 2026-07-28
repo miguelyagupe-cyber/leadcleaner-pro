@@ -944,6 +944,11 @@ def properties_page():
     )
 
 
+@app.route('/reports')
+def reports_page():
+    return render_template('reports.html')
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -1001,6 +1006,11 @@ def api_properties():
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pagination or filter value'}), 400
     return jsonify(result)
+
+
+@app.route('/api/reports/acquisition')
+def api_acquisition_report():
+    return jsonify(get_crm().acquisition_report())
 
 
 @app.route('/api/health')
