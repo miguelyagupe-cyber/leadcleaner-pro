@@ -208,6 +208,18 @@ day, so activity is never entered twice. The live view shows targets, completed
 work, and follow-ups still due. Closing the day preserves an optional summary
 and leaves the complete activity history attached to its leads.
 
+## Operational alert center
+
+The Alerts workspace creates persistent in-app updates for overdue follow-ups,
+conflicting deceased-owner evidence, processing failures, county lists ready
+for approval, and enrichment conflicts. Each condition uses a stable
+fingerprint, so repeated polling never creates duplicate alerts.
+
+Unread counts appear on the dashboard and the alert inbox refreshes every
+minute. Daryl can open the exact affected workflow, mark individual alerts
+read, or clear the unread inbox while retaining its history. These are in-app
+alerts only; email and SMS delivery remain unconnected external channels.
+
 ## CRM database
 
 Local development uses SQLite by default and creates its database at:

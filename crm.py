@@ -324,6 +324,24 @@ class DailyCheckIn(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OperationalAlert(Base):
+    __tablename__ = 'operational_alerts'
+    __table_args__ = (
+        Index('idx_alert_read', 'read_at'),
+        Index('idx_alert_severity', 'severity'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
+    alert_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False)
+    href: Mapped[str] = mapped_column(Text, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def _as_dict(instance):
     return {
         column.name: getattr(instance, column.name)
@@ -1780,3 +1798,155 @@ class CRMRepository:
                 item.closing_notes = notes
                 item.completed_at = now
         return self.daily_execution()
+
+    def sync_operational_alerts(self):
+        now = utc_now()
+        today = date.today().isoformat()
+        candidates = []
+        with self.Session() as session:
+            overdue = session.scalars(
+                select(Lead).where(
+                    Lead.next_follow_up.is_not(None),
+                    Lead.next_follow_up < today,
+                    Lead.status.not_in(('closed', 'disqualified')),
+                )
+            ).all()
+            evidence = session.scalars(
+                select(ResearchEvidence).where(
+                    ResearchEvidence.retracted_at.is_(None)
+                )
+            ).all()
+            jobs = session.scalars(select(ProcessingJob)).all()
+            batches = session.scalars(
+                select(EnrichmentBatch).where(
+                    EnrichmentBatch.status == 'completed_with_conflicts'
+                )
+            ).all()
+
+        for lead in overdue:
+            candidates.append({
+                'fingerprint': f"followup:{lead.id}:{lead.next_follow_up}",
+                'alert_type': 'overdue_follow_up',
+                'severity': 'urgent',
+                'title': f"Follow-up overdue · {lead.owner_name}",
+                'detail': (
+                    f"Due {lead.next_follow_up} for "
+                    f"{lead.property_address or lead.tax_id or 'this lead'}."
+                ),
+                'href': f"/leads?lead={lead.id}",
+            })
+
+        by_lead = {}
+        for item in evidence:
+            by_lead.setdefault(item.lead_id, []).append(item)
+        for lead_id, items in by_lead.items():
+            if summarize_evidence(items)['status'] == 'conflicting_evidence':
+                candidates.append({
+                    'fingerprint': f"evidence-conflict:{lead_id}",
+                    'alert_type': 'evidence_conflict',
+                    'severity': 'high',
+                    'title': 'Conflicting deceased-owner evidence',
+                    'detail': (
+                        'Confirmed living and death evidence require manual '
+                        'identity resolution before outreach.'
+                    ),
+                    'href': f"/leads?lead={lead_id}",
+                })
+
+        for job in jobs:
+            meta = json.loads(job.meta_json)
+            status = meta.get('status')
+            if status == 'ready_for_approval':
+                candidates.append({
+                    'fingerprint': f"job-ready:{job.job_id}",
+                    'alert_type': 'import_ready',
+                    'severity': 'high',
+                    'title': 'County list ready for approval',
+                    'detail': (
+                        f"{meta.get('source_filename', 'Processing run')} "
+                        'finished verification and awaits explicit CRM import.'
+                    ),
+                    'href': f"/?resume={job.job_id}",
+                })
+            elif status == 'failed':
+                candidates.append({
+                    'fingerprint': f"job-failed:{job.job_id}",
+                    'alert_type': 'processing_failed',
+                    'severity': 'urgent',
+                    'title': 'County-list processing needs attention',
+                    'detail': str(
+                        meta.get('error') or 'The processing run failed.'
+                    ),
+                    'href': f"/?resume={job.job_id}",
+                })
+
+        for batch in batches:
+            result = json.loads(batch.result_summary_json or '{}')
+            candidates.append({
+                'fingerprint': f"enrichment-conflict:{batch.batch_id}",
+                'alert_type': 'enrichment_conflict',
+                'severity': 'high',
+                'title': 'Enrichment conflicts need review',
+                'detail': (
+                    f"{result.get('conflicts', 0)} returned contacts conflict "
+                    f"with trusted CRM data in {batch.batch_id}."
+                ),
+                'href': '/enrichment',
+            })
+
+        with self.Session.begin() as session:
+            existing = set(session.scalars(
+                select(OperationalAlert.fingerprint).where(
+                    OperationalAlert.fingerprint.in_(
+                        [item['fingerprint'] for item in candidates]
+                    )
+                )
+            ).all()) if candidates else set()
+            for item in candidates:
+                if item['fingerprint'] not in existing:
+                    session.add(OperationalAlert(**item, created_at=now))
+        return len(candidates)
+
+    def list_operational_alerts(self, include_read=True, limit=100):
+        self.sync_operational_alerts()
+        conditions = [] if include_read else [OperationalAlert.read_at.is_(None)]
+        with self.Session() as session:
+            unread = session.scalar(
+                select(func.count()).select_from(OperationalAlert).where(
+                    OperationalAlert.read_at.is_(None)
+                )
+            ) or 0
+            items = session.scalars(
+                select(OperationalAlert)
+                .where(*conditions)
+                .order_by(
+                    OperationalAlert.read_at.is_not(None),
+                    OperationalAlert.created_at.desc(),
+                )
+                .limit(min(max(int(limit), 1), 200))
+            ).all()
+        return {
+            'unread': int(unread),
+            'items': [_as_dict(item) for item in items],
+        }
+
+    def mark_operational_alert(self, alert_id):
+        with self.Session.begin() as session:
+            item = session.get(OperationalAlert, alert_id)
+            if not item:
+                return None
+            if not item.read_at:
+                item.read_at = utc_now()
+        return _as_dict(item)
+
+    def mark_all_operational_alerts(self):
+        now = utc_now()
+        with self.Session.begin() as session:
+            items = session.scalars(
+                select(OperationalAlert).where(
+                    OperationalAlert.read_at.is_(None)
+                )
+            ).all()
+            for item in items:
+                item.read_at = now
+        return len(items)

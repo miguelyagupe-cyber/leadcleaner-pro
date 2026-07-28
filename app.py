@@ -959,6 +959,11 @@ def imports_page():
     return render_template('imports.html')
 
 
+@app.route('/alerts')
+def alerts_page():
+    return render_template('alerts.html')
+
+
 @app.route('/research')
 def research_page():
     return render_template(
@@ -1063,6 +1068,28 @@ def api_import_operations():
 @app.route('/api/today/execution')
 def api_daily_execution():
     return jsonify(get_crm().daily_execution())
+
+
+@app.route('/api/alerts')
+def api_operational_alerts():
+    include_read = request.args.get('include_read', 'true').lower() == 'true'
+    return jsonify(
+        get_crm().list_operational_alerts(include_read=include_read)
+    )
+
+
+@app.route('/api/alerts/<int:alert_id>/read', methods=['POST'])
+def api_mark_operational_alert(alert_id):
+    item = get_crm().mark_operational_alert(alert_id)
+    if not item:
+        return jsonify({'error': 'Alert not found'}), 404
+    return jsonify({'success': True, 'alert': item})
+
+
+@app.route('/api/alerts/read-all', methods=['POST'])
+def api_mark_all_operational_alerts():
+    count = get_crm().mark_all_operational_alerts()
+    return jsonify({'success': True, 'updated': count})
 
 
 @app.route('/api/today/check-in', methods=['POST'])
