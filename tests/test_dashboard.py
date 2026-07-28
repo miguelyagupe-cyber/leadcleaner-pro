@@ -30,6 +30,13 @@ class DashboardApiTest(unittest.TestCase):
         self.assertEqual(payload['metrics']['actionable_leads'], 0)
         self.assertEqual(payload['attention'], [])
 
+    def test_dashboard_explains_safe_assessor_batch_pause(self):
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Batch paused safely', response.data)
+        self.assertIn(b'no failed lookup was approved', response.data)
+
     def test_dashboard_is_derived_from_latest_job_metadata(self):
         output_filename = 'Clean_Leads_2023_test.xlsx'
         output_path = os.path.join(self.temp_dir.name, output_filename)

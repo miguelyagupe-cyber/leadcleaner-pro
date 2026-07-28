@@ -8,6 +8,18 @@ import requests
 
 ASSESSOR_BASE_URL = 'https://assessor.tulsacounty.org/Property/Info'
 ALLOWED_ACCOUNT_TYPES = {'Residential', 'Agricultural'}
+BUSINESS_OWNER_PATTERN = re.compile(
+    r'\b(?:LLC|L\.?\s*L\.?\s*C\.?|INC(?:ORPORATED)?|CORP(?:ORATION)?|'
+    r'LLP|LTD|LIMITED|COMPANY)\b',
+    flags=re.I,
+)
+RETRYABLE_STATUSES = {
+    'blocked',
+    'parse_error',
+    'rate_limited',
+    'request_error',
+    'server_error',
+}
 
 
 def normalize_account_no(pid):
@@ -117,7 +129,7 @@ def parse_assessor_page(html, account_no, source_url):
 
 
 class TulsaAssessorClient:
-    def __init__(self, session=None, timeout=15, delay_seconds=0.5):
+    def __init__(self, session=None, timeout=15, delay_seconds=1.0):
         self.session = session or requests.Session()
         self.timeout = timeout
         self.delay_seconds = max(float(delay_seconds), 0)
@@ -143,12 +155,39 @@ class TulsaAssessorClient:
             )
         try:
             response = self.session.get(source_url, timeout=self.timeout)
+            if response.status_code == 429:
+                return AssessorResult(
+                    account_no=account_no,
+                    status='rate_limited',
+                    source_url=source_url,
+                    error='Tulsa County Assessor rate limit reached; batch paused',
+                    fetched_at=datetime.now(timezone.utc).isoformat(),
+                )
+            if response.status_code == 403:
+                return AssessorResult(
+                    account_no=account_no,
+                    status='blocked',
+                    source_url=source_url,
+                    error='Tulsa County Assessor denied the request; batch paused',
+                    fetched_at=datetime.now(timezone.utc).isoformat(),
+                )
             if response.status_code == 404:
                 return AssessorResult(
                     account_no=account_no,
                     status='not_found',
                     source_url=source_url,
                     error='Property account was not found',
+                    fetched_at=datetime.now(timezone.utc).isoformat(),
+                )
+            if response.status_code >= 500:
+                return AssessorResult(
+                    account_no=account_no,
+                    status='server_error',
+                    source_url=source_url,
+                    error=(
+                        f'Tulsa County Assessor returned HTTP '
+                        f'{response.status_code}; batch paused'
+                    ),
                     fetched_at=datetime.now(timezone.utc).isoformat(),
                 )
             response.raise_for_status()
@@ -169,6 +208,8 @@ class TulsaAssessorClient:
 def verification_decision(source_owner, result):
     if result.status != 'verified':
         return 'Not verified', 'Assessor lookup did not produce reliable data'
+    if BUSINESS_OWNER_PATTERN.search(result.current_owner):
+        return 'Review', 'Current Assessor owner is a business entity'
     match = owner_match(source_owner, result.current_owner)
     if match == 'changed':
         return 'Review', 'Current Assessor owner differs from source list'

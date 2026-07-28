@@ -504,12 +504,18 @@
         const verified = result.counts['Verified candidate'] || 0;
         const review = result.counts.Review || 0;
         const unresolved = result.counts['Not verified'] || 0;
-        $('verification-result').textContent = `${nf.format(result.processed)} checked · ${nf.format(verified)} verified candidates · ${nf.format(review)} require review · ${nf.format(unresolved)} unresolved · ${nf.format(result.remaining_estimate)} remaining.`;
+        if (result.stop_reason) {
+          $('verification-result').textContent = `Batch paused safely: ${result.stop_reason} ${nf.format(result.remaining_estimate)} records remain pending; no failed lookup was approved.`;
+        } else {
+          $('verification-result').textContent = `${nf.format(result.processed)} checked · ${nf.format(verified)} verified candidates · ${nf.format(review)} require review · ${nf.format(unresolved)} unresolved · ${nf.format(result.remaining_estimate)} remaining.`;
+        }
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
         $('download-result').textContent = 'Download Assessor-verified workbook';
-        button.textContent = result.remaining_estimate ? 'Verify next 25 owners' : 'Assessor verification complete';
+        button.textContent = result.stop_reason
+          ? 'Retry Assessor verification'
+          : (result.remaining_estimate ? 'Verify next 25 owners' : 'Assessor verification complete');
         button.disabled = !result.remaining_estimate;
-        await loadApprovalPreview();
+        if (!result.stop_reason) await loadApprovalPreview();
       } catch (error) {
         $('verification-result').textContent = error.message;
         button.textContent = 'Retry Assessor verification';
