@@ -1065,6 +1065,9 @@ def api_leads():
             status=request.args.get('status', '').strip(),
             priority=request.args.get('priority', '').strip(),
             research_only=request.args.get('research_only', '').lower() == 'true',
+            research_category_filter=request.args.get(
+                'research_category', ''
+            ).strip(),
             follow_up=request.args.get('follow_up', '').strip(),
             page=request.args.get('page', 1),
             per_page=request.args.get('per_page', 50),

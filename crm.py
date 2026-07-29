@@ -95,6 +95,34 @@ CALL_OUTCOMES_REQUIRING_FOLLOW_UP = (
     'deal_pending',
 )
 
+RESEARCH_CATEGORIES = (
+    'deceased_estate',
+    'ownership_mismatch',
+    'care_of_representative',
+    'out_of_state',
+    'po_box',
+    'mailing_city_mismatch',
+    'other_mailing',
+)
+RESEARCH_CATEGORY_LABELS = {
+    'deceased_estate': 'Deceased & Estate',
+    'ownership_mismatch': 'Ownership mismatch',
+    'care_of_representative': 'Care of / representative',
+    'out_of_state': 'Out-of-state',
+    'po_box': 'PO Box',
+    'mailing_city_mismatch': 'Different mailing city',
+    'other_mailing': 'Other mailing anomaly',
+}
+RESEARCH_CATEGORY_DESCRIPTIONS = {
+    'deceased_estate': 'Estate text or another direct deceased-owner signal',
+    'ownership_mismatch': 'County owner and researched identity may differ',
+    'care_of_representative': 'Mail is routed through a representative or third party',
+    'out_of_state': 'Owner mailing address is outside Oklahoma',
+    'po_box': 'Owner receives correspondence through a post-office box',
+    'mailing_city_mismatch': 'Mailing city differs from the property municipality',
+    'other_mailing': 'Another mailing pattern requires human review',
+}
+
 
 def utc_now():
     return datetime.now(timezone.utc)
@@ -116,6 +144,44 @@ def research_reason(lead):
     if mailing_signal:
         reasons.append(f'Mailing signal: {mailing_signal}')
     return ' · '.join(reasons) or 'No active research signal'
+
+
+def research_category(lead):
+    if lead.deceased_flag:
+        return 'deceased_estate'
+    signal = str(lead.mailing_signal or '').strip().lower()
+    if any(term in signal for term in (
+        'owner mismatch',
+        'ownership mismatch',
+        'identity mismatch',
+        'assessor mismatch',
+    )):
+        return 'ownership_mismatch'
+    if any(term in signal for term in (
+        'care of',
+        'c/o',
+        'representative',
+        'executor',
+    )):
+        return 'care_of_representative'
+    if 'out of state' in signal or 'out-of-state' in signal:
+        return 'out_of_state'
+    if 'po box' in signal or 'p.o. box' in signal:
+        return 'po_box'
+    if 'different mailing city' in signal or 'mailing city mismatch' in signal:
+        return 'mailing_city_mismatch'
+    return 'other_mailing'
+
+
+def research_category_payload(lead):
+    category = research_category(lead)
+    return {
+        'research_category': category,
+        'research_category_label': RESEARCH_CATEGORY_LABELS[category],
+        'research_category_description': (
+            RESEARCH_CATEGORY_DESCRIPTIONS[category]
+        ),
+    }
 
 
 def _lead_source_payload(lead):
@@ -809,6 +875,7 @@ class CRMRepository:
         status='',
         priority='',
         research_only=False,
+        research_category_filter='',
         follow_up='',
         page=1,
         per_page=50,
@@ -829,6 +896,11 @@ class CRMRepository:
             conditions.append(Lead.priority == priority)
         if research_only:
             conditions.append(research_queue_condition())
+        if (
+            research_category_filter
+            and research_category_filter not in RESEARCH_CATEGORIES
+        ):
+            raise ValueError('Invalid research category')
         if follow_up == 'due':
             conditions.extend(
                 (
@@ -840,7 +912,6 @@ class CRMRepository:
 
         page = max(int(page), 1)
         per_page = min(max(int(per_page), 1), 100)
-        offset = (page - 1) * per_page
         latest_note = (
             select(LeadNote.body)
             .where(LeadNote.lead_id == Lead.id)
@@ -869,16 +940,71 @@ class CRMRepository:
         )
 
         with self.Session() as session:
-            total = session.scalar(
-                select(func.count()).select_from(Lead).where(*conditions)
-            ) or 0
-            rows = session.execute(
-                select(Lead, latest_note.label('latest_note'))
-                .where(*conditions)
-                .order_by(*ordering)
-                .limit(per_page)
-                .offset(offset)
-            ).all()
+            research_summary = []
+            if research_only:
+                queue_leads = session.scalars(
+                    select(Lead).where(research_queue_condition())
+                ).all()
+                category_counts = {
+                    category: 0 for category in RESEARCH_CATEGORIES
+                }
+                for lead in queue_leads:
+                    category_counts[research_category(lead)] += 1
+                research_summary = [
+                    {
+                        'category': category,
+                        'label': RESEARCH_CATEGORY_LABELS[category],
+                        'description': (
+                            RESEARCH_CATEGORY_DESCRIPTIONS[category]
+                        ),
+                        'count': category_counts[category],
+                    }
+                    for category in RESEARCH_CATEGORIES
+                ]
+
+                rows = session.execute(
+                    select(Lead, latest_note.label('latest_note'))
+                    .where(*conditions)
+                ).all()
+                if research_category_filter:
+                    rows = [
+                        row for row in rows
+                        if research_category(row[0])
+                        == research_category_filter
+                    ]
+                priority_rank = {
+                    'urgent': 0,
+                    'high': 1,
+                    'medium': 2,
+                    'normal': 3,
+                }
+                category_rank = {
+                    category: rank
+                    for rank, category in enumerate(RESEARCH_CATEGORIES)
+                }
+                rows.sort(
+                    key=lambda row: (
+                        category_rank[research_category(row[0])],
+                        priority_rank.get(row[0].priority, 9),
+                        -float(row[0].total_due or 0),
+                        -row[0].id,
+                    )
+                )
+                total = len(rows)
+                offset = (page - 1) * per_page
+                rows = rows[offset:offset + per_page]
+            else:
+                total = session.scalar(
+                    select(func.count()).select_from(Lead).where(*conditions)
+                ) or 0
+                offset = (page - 1) * per_page
+                rows = session.execute(
+                    select(Lead, latest_note.label('latest_note'))
+                    .where(*conditions)
+                    .order_by(*ordering)
+                    .limit(per_page)
+                    .offset(offset)
+                ).all()
 
         return {
             'items': [
@@ -886,6 +1012,7 @@ class CRMRepository:
                     **_as_dict(lead),
                     'latest_note': note,
                     'research_reason': research_reason(lead),
+                    **research_category_payload(lead),
                 }
                 for lead, note in rows
             ],
@@ -893,6 +1020,7 @@ class CRMRepository:
             'page': page,
             'per_page': per_page,
             'pages': max((total + per_page - 1) // per_page, 1),
+            'research_summary': research_summary,
         }
 
     def get_lead(self, lead_id):
@@ -923,6 +1051,7 @@ class CRMRepository:
             return {
                 **_as_dict(lead),
                 'research_reason': research_reason(lead),
+                **research_category_payload(lead),
                 'notes': [_as_dict(note) for note in notes],
                 'activity': [_as_dict(item) for item in activity],
                 'calls': [_as_dict(item) for item in calls],
