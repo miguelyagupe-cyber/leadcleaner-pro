@@ -245,6 +245,12 @@ schema idempotently on startup, and verifies connections before reusing them.
 Keep the database in the same Render region as the web service and store the
 internal URL as a secret environment variable named `DATABASE_URL`.
 
+Render runs `python migrate.py` before Gunicorn accepts traffic. Schema changes
+use an idempotent migration, a PostgreSQL advisory lock, and strict lock and
+statement timeouts. The contact ledger table is prepared independently from
+its application interface, so a schema deploy can be validated before the
+feature begins reading or writing contact data.
+
 ### Durable processing storage
 
 Processing jobs no longer depend on Render's ephemeral filesystem. PostgreSQL
