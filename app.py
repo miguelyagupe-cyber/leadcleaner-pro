@@ -23,9 +23,6 @@ from datetime import datetime, timedelta
 from crm import (
     CALL_DIRECTIONS,
     CALL_OUTCOMES,
-    CONTACT_CONFIDENCE,
-    CONTACT_KINDS,
-    CONTACT_STATUSES,
     CRM_PRIORITIES,
     CRM_STATUSES,
     EVIDENCE_CONFIDENCE,
@@ -987,9 +984,6 @@ def leads_page():
         evidence_confidence=EVIDENCE_CONFIDENCE,
         identity_matches=IDENTITY_MATCHES,
         call_outcomes=CALL_OUTCOMES,
-        contact_kinds=CONTACT_KINDS,
-        contact_confidence=CONTACT_CONFIDENCE,
-        contact_statuses=CONTACT_STATUSES,
         call_directions=CALL_DIRECTIONS,
     )
 
@@ -1007,9 +1001,6 @@ def today_page():
         evidence_confidence=EVIDENCE_CONFIDENCE,
         identity_matches=IDENTITY_MATCHES,
         call_outcomes=CALL_OUTCOMES,
-        contact_kinds=CONTACT_KINDS,
-        contact_confidence=CONTACT_CONFIDENCE,
-        contact_statuses=CONTACT_STATUSES,
         call_directions=CALL_DIRECTIONS,
     )
 
@@ -1063,9 +1054,6 @@ def research_page():
         evidence_confidence=EVIDENCE_CONFIDENCE,
         identity_matches=IDENTITY_MATCHES,
         call_outcomes=CALL_OUTCOMES,
-        contact_kinds=CONTACT_KINDS,
-        contact_confidence=CONTACT_CONFIDENCE,
-        contact_statuses=CONTACT_STATUSES,
         call_directions=CALL_DIRECTIONS,
     )
 
@@ -1359,33 +1347,6 @@ def api_add_probate_contact(lead_id):
     if not result:
         return jsonify({'error': 'Lead not found'}), 404
     return jsonify({'success': True, **result}), 201
-
-
-@app.route('/api/leads/<int:lead_id>/contacts', methods=['POST'])
-def api_add_contact_point(lead_id):
-    payload = request.get_json(silent=True) or {}
-    try:
-        result = get_crm().add_contact_point(lead_id, payload)
-    except ValueError as error:
-        return jsonify({'error': str(error)}), 400
-    if not result:
-        return jsonify({'error': 'Lead not found'}), 404
-    return jsonify({'success': True, **result}), 201
-
-
-@app.route(
-    '/api/leads/<int:lead_id>/contacts/<int:contact_id>',
-    methods=['PATCH'],
-)
-def api_update_contact_point(lead_id, contact_id):
-    payload = request.get_json(silent=True) or {}
-    try:
-        result = get_crm().update_contact_point(lead_id, contact_id, payload)
-    except ValueError as error:
-        return jsonify({'error': str(error)}), 400
-    if not result:
-        return jsonify({'error': 'Lead or contact not found'}), 404
-    return jsonify({'success': True, **result})
 
 
 @app.route(
