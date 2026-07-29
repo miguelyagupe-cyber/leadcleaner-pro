@@ -26,25 +26,39 @@ class ApprovedImportTest(unittest.TestCase):
         self.repository.initialize()
         rows = []
         for index, decision in enumerate(
-            ('Verified candidate', 'Verified candidate', 'Review', 'Not checked'),
+            (
+                'Verified candidate',
+                'Verified candidate',
+                'Verified candidate',
+                'Review',
+                'Not checked',
+            ),
             start=1,
         ):
+            property_number = 1 if index in (1, 2) else index
             rows.append(
                 {
                     'Tax ID': f'TEST-{index}',
-                    'PID': f'00000-00-00-0000{index}',
-                    'Owner Name': f'SOURCE OWNER {index}',
-                    'Current Assessor Owner': f'CURRENT OWNER {index}',
+                    'PID': f'00000-00-00-0000{property_number}',
+                    'Owner Name': f'SOURCE OWNER {property_number}',
+                    'Current Assessor Owner': f'CURRENT OWNER {property_number}',
                     'Current Owner Verification': decision,
                     'TotalDue': index * 1000,
                     'Address': f'TEST MAILING ADDRESS {index}',
                     'OWNR_ADDR 6': 'TULSA',
                     'OWNR_ADDR ST': 'OK',
                     'ZIP': '00000',
-                    'ST_NO': str(index * 100),
+                    'ST_NO': str(property_number * 100),
                     'ST_NAME': 'SAMPLE',
                     'ST_STREET_TYPE': 'ST',
                     'ST_CITY': 'TULSA',
+                    'Lead Score': 50,
+                    'Lead Tier': 'C',
+                    'Score Status': 'Preliminary',
+                    'Deceased Research Status': 'No text signal',
+                    'Owner Type': 'Individual / joint owners',
+                    'Data Quality Issues': '',
+                    'Assessor Vacant': 'No',
                     'Deceased Evidence': (
                         'Estate notation in owner name' if index == 1 else ''
                     ),
@@ -73,7 +87,13 @@ class ApprovedImportTest(unittest.TestCase):
                     'output_filename': 'clean.xlsx',
                     'assessor_output_filename': workbook_name,
                     'tax_year': 2023,
-                    'stats': {'prequalified': 4},
+                    'stats': {'prequalified': 5},
+                    'status': 'ready_for_approval',
+                    'assessor_progress': {
+                        'checked': 5,
+                        'total': 5,
+                        'remaining': 0,
+                    },
                 },
                 file_handle,
             )
@@ -87,7 +107,9 @@ class ApprovedImportTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload['approved_candidates'], 2)
-        self.assertEqual(payload['total_debt'], 3000)
+        self.assertEqual(payload['approved_accounts'], 3)
+        self.assertEqual(payload['consolidated_accounts'], 1)
+        self.assertEqual(payload['total_debt'], 6000)
         self.assertEqual(payload['decision_counts']['Review'], 1)
         self.assertEqual(payload['decision_counts']['Not checked'], 1)
         self.assertEqual(len(payload['approval_token']), 64)
@@ -121,14 +143,22 @@ class ApprovedImportTest(unittest.TestCase):
 
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(first['imported'], 2)
+        self.assertEqual(first['approved_accounts'], 3)
+        self.assertEqual(first['consolidated_accounts'], 1)
         self.assertEqual(first['duplicates_skipped'], 0)
         self.assertEqual(second['imported'], 0)
         self.assertEqual(second['duplicates_skipped'], 2)
         self.assertEqual(leads['total'], 2)
         self.assertEqual(
             {lead['owner_name'] for lead in leads['items']},
-            {'CURRENT OWNER 1', 'CURRENT OWNER 2'},
+            {'CURRENT OWNER 1', 'CURRENT OWNER 3'},
         )
+        consolidated = next(
+            lead for lead in leads['items']
+            if lead['owner_name'] == 'CURRENT OWNER 1'
+        )
+        self.assertEqual(consolidated['total_due'], 3000)
+        self.assertEqual(consolidated['tax_id'], 'TEST-2 | TEST-1')
 
     def test_review_and_unchecked_records_never_enter_crm(self):
         preview = self.client.get(
@@ -145,8 +175,25 @@ class ApprovedImportTest(unittest.TestCase):
             lead['owner_name'] for lead in self.repository.list_leads()['items']
         }
 
-        self.assertNotIn('CURRENT OWNER 3', owners)
         self.assertNotIn('CURRENT OWNER 4', owners)
+        self.assertNotIn('CURRENT OWNER 5', owners)
+
+    def test_preview_is_locked_until_assessor_verification_is_complete(self):
+        meta_path = os.path.join(
+            self.output_dir,
+            'approval-job_meta.json',
+        )
+        with open(meta_path) as file_handle:
+            meta = json.load(file_handle)
+        meta['status'] = 'assessor_in_progress'
+        meta['assessor_progress']['remaining'] = 1
+        with open(meta_path, 'w') as file_handle:
+            json.dump(meta, file_handle)
+
+        response = self.client.get('/api/import/approval-job/preview')
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('locked', response.get_json()['error'])
 
 
 if __name__ == '__main__':

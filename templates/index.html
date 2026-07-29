@@ -588,13 +588,16 @@
       currentApprovalToken = result.approval_token;
       const button = $('approve-crm-import');
       button.style.display = result.approved_candidates ? 'inline-block' : 'none';
-      button.disabled = result.already_committed && !result.approved_candidates;
-      $('approval-result').textContent = `${nf.format(result.approved_candidates)} verified candidates are eligible for explicit CRM import · ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(result.total_debt || 0)} total delinquent debt.${result.already_committed ? ` ${nf.format(result.previously_imported)} were previously imported.` : ''}`;
+      button.disabled = result.already_committed;
+      button.textContent = result.already_committed
+        ? 'Verified run already imported'
+        : 'Import verified properties';
+      $('approval-result').textContent = `${nf.format(result.approved_candidates)} unique properties are CRM-ready from ${nf.format(result.approved_accounts)} verified tax accounts · ${nf.format(result.consolidated_accounts)} duplicate property rows consolidated · ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(result.total_debt || 0)} total delinquent debt.${result.already_committed ? ` ${nf.format(result.previously_imported)} were previously imported.` : ''}`;
     }
 
     async function approveCrmImport() {
       if (!currentJobId || !currentApprovalToken) return;
-      if (!window.confirm('Import only the currently verified candidates into the CRM? Review and unresolved records will remain excluded.')) return;
+      if (!window.confirm('Import one CRM lead per verified property? Every associated Tax ID and debt line will remain preserved. Review records will remain excluded.')) return;
       const button = $('approve-crm-import');
       button.disabled = true;
       button.textContent = 'Importing approved candidates…';
@@ -609,8 +612,8 @@
         });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'CRM import failed.');
-        $('approval-result').textContent = `${nf.format(result.imported)} candidates imported · ${nf.format(result.duplicates_skipped)} duplicates skipped · ${nf.format(result.crm_total)} total CRM leads.`;
-        button.textContent = 'Approved candidates imported';
+        $('approval-result').textContent = `${nf.format(result.imported)} unique properties imported from ${nf.format(result.approved_accounts)} verified tax accounts · ${nf.format(result.consolidated_accounts)} account rows consolidated · ${nf.format(result.duplicates_skipped)} existing CRM properties skipped · ${nf.format(result.crm_total)} total CRM leads.`;
+        button.textContent = 'Verified properties imported';
         currentApprovalToken = null;
         await loadDashboard();
       } catch (error) {

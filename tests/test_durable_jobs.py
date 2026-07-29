@@ -37,10 +37,22 @@ class DurableProcessingJobsTest(unittest.TestCase):
         workbook_path = os.path.join(self.output_dir, filename)
         frame = pd.DataFrame([{
             'Tax ID': 'TEST-100',
+            'PID': '12345-67-89-00100',
             'Owner Name': 'TEST OWNER ALPHA',
             'Current Assessor Owner': 'TEST OWNER ALPHA',
             'Current Owner Verification': 'Verified candidate',
             'Total Due': 4200,
+            'ST_NO': '100',
+            'ST_NAME': 'SAMPLE',
+            'ST_STREET_TYPE': 'ST',
+            'ST_CITY': 'TULSA',
+            'Lead Score': 50,
+            'Lead Tier': 'C',
+            'Score Status': 'Preliminary',
+            'Deceased Research Status': 'No text signal',
+            'Owner Type': 'Individual / joint owners',
+            'Data Quality Issues': '',
+            'Assessor Vacant': 'No',
         }])
         with pd.ExcelWriter(workbook_path, engine='openpyxl') as writer:
             frame.to_excel(writer, sheet_name='Prequalified - Verify', index=False)
@@ -51,6 +63,12 @@ class DurableProcessingJobsTest(unittest.TestCase):
             'assessor_output_filename': filename,
             'tax_year': 2023,
             'stats': {'final': 1},
+            'status': 'ready_for_approval',
+            'assessor_progress': {
+                'checked': 1,
+                'total': 1,
+                'remaining': 0,
+            },
             'created_at': '2026-01-01T12:00:00',
         }
         save_job_meta(meta)
@@ -138,7 +156,7 @@ class DurableProcessingJobsTest(unittest.TestCase):
         self.assertEqual(job['progress'], 64)
         self.assertEqual(job['assessor']['remaining'], 75)
         self.assertTrue(job['actions']['verify_assessor'])
-        self.assertTrue(job['actions']['preview_approval'])
+        self.assertFalse(job['actions']['preview_approval'])
 
     def test_import_operations_lists_durable_jobs_and_resume_link(self):
         job_id = 'operations-job'
