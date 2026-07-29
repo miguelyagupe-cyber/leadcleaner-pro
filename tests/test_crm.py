@@ -517,6 +517,9 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Turn uncertainty into a verified case.', page.data)
         self.assertIn(b'Executor, heir or representative', page.data)
         self.assertIn(b'Open official source', page.data)
+        self.assertIn(b'Next candidate', page.data)
+        self.assertIn(b'Opened \xc2\xb7 review required', page.data)
+        self.assertIn(b'Copied for official search', page.data)
         self.assertEqual(api['total'], 1)
 
     def test_probate_contact_api_validates_and_records_source(self):
