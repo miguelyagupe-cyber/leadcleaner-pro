@@ -46,6 +46,19 @@ class DashboardApiTest(unittest.TestCase):
         self.assertIn(b'while (!assessorStopRequested)', response.data)
         self.assertIn(b'Continuous verification paused by user', response.data)
 
+    def test_dashboard_does_not_double_count_deceased_research_records(self):
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b'unique properties need evidence review from your latest list',
+            response.data,
+        )
+        self.assertNotIn(
+            b'metrics.deceased_signals + metrics.research_queue',
+            response.data,
+        )
+
     def test_dashboard_is_derived_from_latest_job_metadata(self):
         output_filename = 'Clean_Leads_2023_test.xlsx'
         output_path = os.path.join(self.temp_dir.name, output_filename)

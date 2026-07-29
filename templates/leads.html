@@ -355,7 +355,7 @@
           <td class="money">${money.format(lead.total_due || 0)}</td>
           <td><span class="pill ${lead.priority}">${label(lead.priority)}</span></td>
           <td><span class="pill">${label(lead.status)}</span></td>
-          <td>${lead.deceased_flag ? '<span class="signal">Deceased flag</span>' : lead.mailing_signal ? `<span class="signal">${esc(lead.mailing_signal)} mailing</span>` : '<span class="muted">No signal</span>'}</td>
+          <td>${lead.research_reason && lead.research_reason !== 'No active research signal' ? `<span class="signal">${esc(lead.research_reason)}</span>` : '<span class="muted">No signal</span>'}</td>
           <td>${label(lead.research_status)}</td>
           <td>${dateLabel(lead.next_follow_up)}</td>
         </tr>`).join('');
@@ -371,7 +371,7 @@
       $('lead-details').innerHTML=[
         ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],
         ['Mailing city',lead.mailing_city],['Mailing state',lead.mailing_state],['ZIP code',lead.zip_code],['Tax year',lead.tax_year],
-        ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None']
+        ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None'],['Research reason',lead.research_reason||'No active research signal']
       ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
       $('call-phone').value=lead.phone || '';
       renderEvidence(lead.evidence, lead.evidence_summary); renderCalls(lead.calls); renderNotes(lead.notes); renderActivity(lead.activity);

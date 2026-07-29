@@ -706,7 +706,7 @@
         $('research-count').textContent = nf.format(metrics.research_queue || 0);
         $('today-count').textContent = metrics.follow_ups_due || 0;
         if (data.has_data) {
-          $('welcome-copy').textContent = `${nf.format(metrics.deceased_signals + metrics.research_queue)} records need evidence review from your latest list.`;
+          $('welcome-copy').textContent = `${nf.format(metrics.research_queue)} unique properties need evidence review from your latest list.`;
           $('latest-sync').textContent = data.latest_job
             ? `Last processed ${data.latest_job.completed_label}`
             : 'CRM records synchronized';
