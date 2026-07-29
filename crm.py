@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -637,9 +638,17 @@ class CRMRepository:
             connect_args=connect_args,
         )
         self.Session = sessionmaker(self.engine, expire_on_commit=False)
+        self._initialize_lock = threading.Lock()
+        self._initialized = False
 
     def initialize(self):
-        Base.metadata.create_all(self.engine)
+        if self._initialized:
+            return
+        with self._initialize_lock:
+            if self._initialized:
+                return
+            Base.metadata.create_all(self.engine)
+            self._initialized = True
 
     def health(self):
         with self.engine.connect() as connection:
