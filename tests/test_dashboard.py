@@ -37,6 +37,15 @@ class DashboardApiTest(unittest.TestCase):
         self.assertIn(b'Batch paused safely', response.data)
         self.assertIn(b'no failed lookup was approved', response.data)
 
+    def test_dashboard_can_run_and_pause_continuous_assessor_verification(self):
+        response = self.client.get('/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Verify all safely', response.data)
+        self.assertIn(b'Pause after this batch', response.data)
+        self.assertIn(b'while (!assessorStopRequested)', response.data)
+        self.assertIn(b'Continuous verification paused by user', response.data)
+
     def test_dashboard_is_derived_from_latest_job_metadata(self):
         output_filename = 'Clean_Leads_2023_test.xlsx'
         output_path = os.path.join(self.temp_dir.name, output_filename)

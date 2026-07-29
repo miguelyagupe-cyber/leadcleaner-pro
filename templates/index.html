@@ -373,7 +373,7 @@
         <div class="field"><label for="tax-year">Target tax year</label><input type="number" id="tax-year" value="2023" min="2000" max="2099"></div>
         <div class="progress" id="progress"><div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div><div class="progress-label" id="progress-label">Preparing import…</div></div>
         <div class="error" id="error-box"></div>
-        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download qualification workbook</a><button class="secondary-button" id="verify-assessor" type="button">Verify 25 current owners</button><button class="secondary-button" id="approve-crm-import" type="button" style="display:none;">Approve verified candidates</button></div><p id="verification-result" class="muted"></p><p id="approval-result" class="muted"></p></div>
+        <div class="result" id="result-box"><strong>List processing complete</strong><p id="result-copy"></p><div style="display:flex;gap:10px;flex-wrap:wrap;"><a class="primary-button" id="download-result" href="#" download style="display:inline-grid;place-items:center;">Download qualification workbook</a><button class="secondary-button" id="verify-assessor" type="button">Verify next 25</button><button class="secondary-button" id="verify-all-assessor" type="button">Verify all safely</button><button class="secondary-button" id="pause-assessor" type="button" style="display:none;">Pause after this batch</button><button class="secondary-button" id="approve-crm-import" type="button" style="display:none;">Approve verified candidates</button></div><p id="verification-result" class="muted"></p><p id="approval-result" class="muted"></p></div>
         <div class="modal-actions" id="modal-actions"><button class="secondary-button" id="cancel-import">Cancel</button><button class="primary-button" id="process-button" disabled>Process list</button></div>
       </div>
     </div>
@@ -389,6 +389,8 @@
     const nf = new Intl.NumberFormat('en-US');
     let currentJobId = null;
     let currentApprovalToken = null;
+    let assessorAutoRunning = false;
+    let assessorStopRequested = false;
     const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
     const nativeFetch = window.fetch.bind(window);
     window.fetch = (resource, options = {}) => {
@@ -471,6 +473,13 @@
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
         currentJobId = result.job_id;
         $('verify-assessor').disabled = false;
+        $('verify-all-assessor').disabled = false;
+        $('verify-all-assessor').style.display = 'inline-block';
+        $('pause-assessor').style.display = 'none';
+        $('pause-assessor').disabled = false;
+        $('pause-assessor').textContent = 'Pause after this batch';
+        assessorAutoRunning = false;
+        assessorStopRequested = false;
         $('verification-result').textContent = 'Assessor verification has not started.';
         $('approval-result').textContent = 'CRM import remains locked until candidates pass Assessor verification.';
         $('approve-crm-import').style.display = 'none';
@@ -487,10 +496,18 @@
     }
     processButton.addEventListener('click', processList);
 
-    async function verifyAssessorBatch() {
+    function assessorProgress(result) {
+      const checked = result.job?.assessor?.checked || 0;
+      const total = result.job?.assessor?.total || checked + result.remaining_estimate;
+      const percent = total ? Math.round((checked / total) * 100) : 0;
+      return `${nf.format(checked)} of ${nf.format(total)} checked · ${percent}%`;
+    }
+
+    async function verifyAssessorBatch(automatic = false) {
       if (!currentJobId) return;
       const button = $('verify-assessor');
       button.disabled = true;
+      $('verify-all-assessor').disabled = true;
       button.textContent = 'Verifying official records…';
       $('verification-result').textContent = 'Checking a rate-limited batch against Tulsa County Assessor. Progress is cached.';
       try {
@@ -505,9 +522,9 @@
         const review = result.counts.Review || 0;
         const unresolved = result.counts['Not verified'] || 0;
         if (result.stop_reason) {
-          $('verification-result').textContent = `Batch paused safely: ${result.stop_reason} ${nf.format(result.remaining_estimate)} records remain pending; no failed lookup was approved.`;
+          $('verification-result').textContent = `Batch paused safely: ${result.stop_reason} ${assessorProgress(result)} · ${nf.format(result.remaining_estimate)} remain pending; no failed lookup was approved.`;
         } else {
-          $('verification-result').textContent = `${nf.format(result.processed)} checked · ${nf.format(verified)} verified candidates · ${nf.format(review)} require review · ${nf.format(unresolved)} unresolved · ${nf.format(result.remaining_estimate)} remaining.`;
+          $('verification-result').textContent = `${assessorProgress(result)} · ${nf.format(verified)} verified candidates · ${nf.format(review)} require review · ${nf.format(unresolved)} unresolved · ${nf.format(result.remaining_estimate)} remaining.`;
         }
         $('download-result').href = `/download/${encodeURIComponent(result.download_file)}`;
         $('download-result').textContent = 'Download Assessor-verified workbook';
@@ -515,14 +532,53 @@
           ? 'Retry Assessor verification'
           : (result.remaining_estimate ? 'Verify next 25 owners' : 'Assessor verification complete');
         button.disabled = !result.remaining_estimate;
+        $('verify-all-assessor').disabled = !result.remaining_estimate;
         if (!result.stop_reason) await loadApprovalPreview();
+        return result;
       } catch (error) {
         $('verification-result').textContent = error.message;
         button.textContent = 'Retry Assessor verification';
         button.disabled = false;
+        $('verify-all-assessor').disabled = false;
+        if (automatic) assessorStopRequested = true;
+        return null;
       }
     }
-    $('verify-assessor').addEventListener('click', verifyAssessorBatch);
+    $('verify-assessor').addEventListener('click', () => verifyAssessorBatch(false));
+
+    async function verifyAllAssessor() {
+      if (!currentJobId || assessorAutoRunning) return;
+      assessorAutoRunning = true;
+      assessorStopRequested = false;
+      $('verify-all-assessor').style.display = 'none';
+      $('pause-assessor').style.display = 'inline-block';
+      $('verify-assessor').disabled = true;
+      try {
+        while (!assessorStopRequested) {
+          const result = await verifyAssessorBatch(true);
+          if (!result || result.stop_reason || !result.remaining_estimate) break;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      } finally {
+        assessorAutoRunning = false;
+        $('pause-assessor').style.display = 'none';
+        $('pause-assessor').disabled = false;
+        $('pause-assessor').textContent = 'Pause after this batch';
+        $('verify-all-assessor').style.display = 'inline-block';
+        const complete = $('verify-assessor').textContent === 'Assessor verification complete';
+        $('verify-all-assessor').disabled = complete;
+        $('verify-assessor').disabled = complete;
+        if (assessorStopRequested && !complete) {
+          $('verification-result').textContent += ' Continuous verification paused by user.';
+        }
+      }
+    }
+    $('verify-all-assessor').addEventListener('click', verifyAllAssessor);
+    $('pause-assessor').addEventListener('click', () => {
+      assessorStopRequested = true;
+      $('pause-assessor').disabled = true;
+      $('pause-assessor').textContent = 'Pausing after this batch…';
+    });
 
     async function loadApprovalPreview() {
       if (!currentJobId) return;
