@@ -133,8 +133,81 @@ class CRMTest(unittest.TestCase):
             gamma['research_reason'],
             'Mailing signal: Out of state; Different mailing city',
         )
+        self.assertEqual(gamma['research_category'], 'out_of_state')
+        self.assertEqual(gamma['research_category_label'], 'Out-of-state')
         self.assertEqual(research['total'], 2)
         self.assertEqual(metrics['research_queue'], research['total'])
+        self.assertEqual(
+            sum(item['count'] for item in research['research_summary']),
+            research['total'],
+        )
+
+    def test_research_categories_filter_and_prioritize_the_queue(self):
+        dataframe = pd.concat(
+            [self.dataframe.iloc[[1]].copy() for _ in range(6)],
+            ignore_index=True,
+        )
+        dataframe.loc[:, 'Tax ID'] = [
+            'CATEGORY-CARE',
+            'CATEGORY-STATE',
+            'CATEGORY-BOX',
+            'CATEGORY-CITY',
+            'CATEGORY-OWNER',
+            'CATEGORY-OTHER',
+        ]
+        dataframe.loc[:, 'Owner Name'] = [
+            'CARE OWNER',
+            'STATE OWNER',
+            'BOX OWNER',
+            'CITY OWNER',
+            'MISMATCH OWNER',
+            'OTHER OWNER',
+        ]
+        dataframe.loc[:, 'Absentee/Suspicious Mailing (Verify)'] = [
+            'Care of',
+            'Out of state; Different mailing city',
+            'PO Box',
+            'Different mailing city',
+            'Ownership mismatch',
+            'Strong',
+        ]
+        job = {
+            **self.job,
+            'uid': 'job-research-categories',
+            'source_filename': 'research-categories.xlsx',
+        }
+        self.repository.import_leads(dataframe, job, self.columns)
+
+        all_research = self.repository.list_leads(research_only=True)
+        care_of = self.repository.list_leads(
+            research_only=True,
+            research_category_filter='care_of_representative',
+        )
+        api = self.client.get(
+            '/api/leads?research_only=true'
+            '&research_category=ownership_mismatch'
+        ).get_json()
+        summary = {
+            item['category']: item['count']
+            for item in all_research['research_summary']
+        }
+
+        self.assertEqual(
+            all_research['items'][0]['research_category'],
+            'deceased_estate',
+        )
+        self.assertEqual(care_of['total'], 1)
+        self.assertEqual(care_of['items'][0]['tax_id'], 'CATEGORY-CARE')
+        self.assertEqual(api['total'], 1)
+        self.assertEqual(api['items'][0]['tax_id'], 'CATEGORY-OWNER')
+        self.assertEqual(summary['deceased_estate'], 1)
+        self.assertEqual(summary['ownership_mismatch'], 1)
+        self.assertEqual(summary['care_of_representative'], 1)
+        self.assertEqual(summary['out_of_state'], 1)
+        self.assertEqual(summary['po_box'], 1)
+        self.assertEqual(summary['mailing_city_mismatch'], 1)
+        self.assertEqual(summary['other_mailing'], 1)
+        self.assertEqual(sum(summary.values()), all_research['total'])
 
     def test_api_updates_workflow_and_adds_note(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
@@ -367,6 +440,9 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Identity match', response.data)
         self.assertIn(b'Add evidence', response.data)
         self.assertIn(b'Prepare evidence', response.data)
+        self.assertIn(b'All investigations', response.data)
+        self.assertIn(b'research_category', response.data)
+        self.assertIn(b'research_category_label', response.data)
 
     def test_today_page_exposes_call_and_follow_up_workspace(self):
         response = self.client.get('/today')

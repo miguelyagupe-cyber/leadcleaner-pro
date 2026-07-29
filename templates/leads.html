@@ -56,6 +56,15 @@
     .count-box { text-align:right; }
     .count-box strong { display:block; font:400 26px "Newsreader",serif; color:var(--gold-bright); }
     .count-box span { color:var(--dim); font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
+    .research-lanes { margin-bottom:14px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+    .research-lane { min-height:88px; padding:13px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--muted); cursor:pointer; text-align:left; transition:.16s; }
+    .research-lane:hover { border-color:#3a3b41; background:var(--raised); }
+    .research-lane.active { border-color:var(--gold); background:var(--gold-soft); }
+    .research-lane strong { display:block; margin-bottom:7px; color:var(--text); font-size:11px; font-weight:500; }
+    .research-lane span { display:block; color:var(--dim); font-size:9px; line-height:1.4; }
+    .research-lane b { float:right; margin-left:8px; color:var(--gold-bright); font:400 21px "Newsreader",serif; }
+    .research-lane.all { border-color:#39352b; }
+    .category-tag { display:block; width:max-content; margin-bottom:4px; padding:3px 7px; border:1px solid #403822; border-radius:10px; background:var(--gold-soft); color:var(--gold-bright); font-size:8px; line-height:1; text-transform:uppercase; letter-spacing:.04em; }
     .toolbar { padding:12px; margin-bottom:13px; border:1px solid var(--border); border-radius:6px; background:var(--surface); display:flex; align-items:center; gap:8px; }
     .execution { margin-bottom:14px; border:1px solid var(--border); border-radius:6px; background:var(--surface); overflow:hidden; }
     .execution-head { padding:14px 17px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
@@ -157,6 +166,7 @@
       .brand-name,.nav-label,.nav-item span,.user div { display:none; }
       .brand,.nav-item,.user { justify-content:center; }
       .toolbar { flex-wrap:wrap; }
+      .research-lanes { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .checkin-grid { grid-template-columns:1fr 1fr; }
       .search { flex-basis:100%; }
     }
@@ -170,6 +180,7 @@
       .count-box { display:none; }
       select { flex:1; min-width:130px; }
       .checkin-grid,.execution-progress { grid-template-columns:1fr; }
+      .research-lanes { grid-template-columns:1fr; }
     }
   </style>
 </head>
@@ -208,6 +219,12 @@
           <div><div class="eyebrow">{{ 'Evidence review' if page_mode == 'research' else 'Daily calling queue' if page_mode == 'today' else 'Acquisition workspace' }}</div><h1>{{ 'Research Queue' if page_mode == 'research' else 'Today' if page_mode == 'today' else 'Leads' }}</h1><p>{{ 'Verify deceased-owner and mailing signals before outreach.' if page_mode == 'research' else 'Owners due for contact today, including overdue follow-ups.' if page_mode == 'today' else 'Every actionable owner and property from your processed county lists.' }}</p></div>
           <div class="count-box"><strong id="total-count">—</strong><span>Matching records</span></div>
         </section>
+
+        {% if page_mode == 'research' %}
+        <section class="research-lanes" id="research-lanes" aria-label="Research categories">
+          <button class="research-lane all active" type="button" data-category=""><b id="research-all-count">—</b><strong>All investigations</strong><span>Every unresolved evidence review, ordered by opportunity value.</span></button>
+        </section>
+        {% endif %}
 
         {% if page_mode == 'today' %}
         <section class="execution" id="daily-execution">
@@ -307,7 +324,7 @@
 
   <script>
     const pageMode = {{ page_mode|tojson }};
-    const state = { page:1, pages:1, selectedLead:null, timer:null };
+    const state = { page:1, pages:1, selectedLead:null, timer:null, researchCategory:'' };
     const $ = id => document.getElementById(id);
     const money = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
     const number = new Intl.NumberFormat('en-US');
@@ -337,13 +354,36 @@
       if($('status-filter').value) query.set('status',$('status-filter').value);
       if($('priority-filter').value) query.set('priority',$('priority-filter').value);
       if(pageMode === 'research') query.set('research_only','true');
+      if(pageMode === 'research' && state.researchCategory) query.set('research_category',state.researchCategory);
       if(pageMode === 'today') query.set('follow_up','due');
       return query;
+    }
+    function renderResearchLanes(summary){
+      if(pageMode !== 'research') return;
+      const total=(summary || []).reduce((sum,item)=>sum+item.count,0);
+      $('research-all-count').textContent=number.format(total);
+      document.querySelectorAll('#research-lanes .research-lane:not(.all)').forEach(item=>item.remove());
+      (summary || []).forEach(item=>{
+        const button=document.createElement('button');
+        button.className=`research-lane${state.researchCategory===item.category?' active':''}`;
+        button.type='button';
+        button.dataset.category=item.category;
+        button.innerHTML=`<b>${number.format(item.count)}</b><strong>${esc(item.label)}</strong><span>${esc(item.description)}</span>`;
+        button.addEventListener('click',()=>selectResearchCategory(item.category));
+        $('research-lanes').appendChild(button);
+      });
+      document.querySelector('#research-lanes .all').classList.toggle('active',!state.researchCategory);
+    }
+    function selectResearchCategory(category){
+      state.researchCategory=category;
+      state.page=1;
+      loadLeads();
     }
     async function loadLeads(){
       $('lead-rows').innerHTML='<tr><td colspan="8" class="empty">Loading CRM records…</td></tr>';
       const response=await fetch(`/api/leads?${params()}`);
       const data=await response.json();
+      renderResearchLanes(data.research_summary);
       state.pages=data.pages; $('total-count').textContent=number.format(data.total);
       $('page-summary').textContent=`Page ${data.page} of ${data.pages} · ${number.format(data.total)} records`;
       $('previous-page').disabled=data.page<=1; $('next-page').disabled=data.page>=data.pages;
@@ -355,7 +395,7 @@
           <td class="money">${money.format(lead.total_due || 0)}</td>
           <td><span class="pill ${lead.priority}">${label(lead.priority)}</span></td>
           <td><span class="pill">${label(lead.status)}</span></td>
-          <td>${lead.research_reason && lead.research_reason !== 'No active research signal' ? `<span class="signal">${esc(lead.research_reason)}</span>` : '<span class="muted">No signal</span>'}</td>
+          <td>${lead.research_reason && lead.research_reason !== 'No active research signal' ? `<span class="category-tag">${esc(lead.research_category_label)}</span><span class="signal">${esc(lead.research_reason)}</span>` : '<span class="muted">No signal</span>'}</td>
           <td>${label(lead.research_status)}</td>
           <td>${dateLabel(lead.next_follow_up)}</td>
         </tr>`).join('');
@@ -371,7 +411,7 @@
       $('lead-details').innerHTML=[
         ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],
         ['Mailing city',lead.mailing_city],['Mailing state',lead.mailing_state],['ZIP code',lead.zip_code],['Tax year',lead.tax_year],
-        ['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None'],['Research reason',lead.research_reason||'No active research signal']
+        ['Research category',lead.research_category_label],['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None'],['Research reason',lead.research_reason||'No active research signal']
       ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
       $('call-phone').value=lead.phone || '';
       renderEvidence(lead.evidence, lead.evidence_summary); renderCalls(lead.calls); renderNotes(lead.notes); renderActivity(lead.activity);
@@ -456,7 +496,8 @@
     });
     $('search').addEventListener('input',()=>{ clearTimeout(state.timer); state.timer=setTimeout(()=>{state.page=1;loadLeads();},250); });
     ['status-filter','priority-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
-    $('clear-filters').addEventListener('click',()=>{$('search').value='';$('status-filter').value='';$('priority-filter').value='';state.page=1;loadLeads();});
+    $('clear-filters').addEventListener('click',()=>{$('search').value='';$('status-filter').value='';$('priority-filter').value='';state.researchCategory='';state.page=1;loadLeads();});
+    if(pageMode==='research') document.querySelector('#research-lanes .all').addEventListener('click',()=>selectResearchCategory(''));
     $('previous-page').addEventListener('click',()=>{if(state.page>1){state.page--;loadLeads();}});
     $('next-page').addEventListener('click',()=>{if(state.page<state.pages){state.page++;loadLeads();}});
     $('close-drawer').addEventListener('click',closeDrawer); $('backdrop').addEventListener('click',closeDrawer);
