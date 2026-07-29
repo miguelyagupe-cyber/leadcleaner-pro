@@ -33,7 +33,7 @@ from crm import (
     RESEARCH_STATUSES,
     CRMRepository,
 )
-from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads
+from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads, score_lead
 from research_plan import build_research_plan
 from assessor import (
     RETRYABLE_STATUSES,
@@ -320,7 +320,6 @@ def processing_job_snapshot(meta):
                 'assessor_in_progress',
             ),
             'preview_approval': status in (
-                'assessor_in_progress',
                 'ready_for_approval',
                 'imported',
             ) and bool(meta.get('assessor_output_filename')),
@@ -1448,10 +1447,234 @@ def processing_job(job_id):
     return jsonify({'success': True, 'job': snapshot})
 
 
+def _clean_identifier(value):
+    if pd.isna(value):
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _property_lead_key(row, pid_column, tax_id_column):
+    pid = normalize_account_no(row.get(pid_column)) if pid_column else ''
+    if pid:
+        return f'pid:{pid}'
+    address = str(row.get('Property Address (Normalized)') or '').strip().upper()
+    city = str(row.get('ST_CITY') or '').strip().upper()
+    if address:
+        return f'address:{address}|{city}'
+    return f'tax:{_clean_identifier(row.get(tax_id_column))}'
+
+
+def _finalize_verified_properties(leads):
+    """Return one CRM-ready row per verified Assessor property."""
+    if 'Current Owner Verification' not in leads:
+        raise ValueError('Current-owner decisions are missing')
+    approved_accounts = leads[
+        leads['Current Owner Verification'] == 'Verified candidate'
+    ].copy()
+    if approved_accounts.empty:
+        return approved_accounts
+
+    pid_column = find_column(approved_accounts, ['PID'])
+    tax_id_column = find_column(approved_accounts, ['TAX', 'ID'])
+    total_due_column = find_column(approved_accounts, ['TOTAL', 'DUE'])
+    if not pid_column or not tax_id_column or not total_due_column:
+        raise ValueError('PID, Tax ID, or Total Due is missing')
+
+    approved_accounts['_property_lead_key'] = approved_accounts.apply(
+        lambda row: _property_lead_key(row, pid_column, tax_id_column),
+        axis=1,
+    )
+    approved_accounts['_numeric_total_due'] = pd.to_numeric(
+        approved_accounts[total_due_column],
+        errors='coerce',
+    ).fillna(0)
+
+    property_rows = []
+    for property_key, accounts in approved_accounts.groupby(
+        '_property_lead_key',
+        sort=False,
+        dropna=False,
+    ):
+        accounts = accounts.sort_values(
+            '_numeric_total_due',
+            ascending=False,
+        )
+        property_row = accounts.iloc[0].copy()
+        account_details = []
+        tax_ids = []
+        for _, account in accounts.iterrows():
+            tax_id = _clean_identifier(account.get(tax_id_column))
+            if tax_id and tax_id not in tax_ids:
+                tax_ids.append(tax_id)
+            account_details.append(
+                {
+                    'tax_id': tax_id,
+                    'total_due': float(account['_numeric_total_due']),
+                    'comments': str(account.get('Comments') or '').strip(),
+                }
+            )
+        aggregate_due = float(accounts['_numeric_total_due'].sum())
+        property_row[total_due_column] = aggregate_due
+        property_row[tax_id_column] = ' | '.join(tax_ids)
+        property_row['Property Lead Key'] = property_key
+        property_row['Tax Account Count'] = int(len(accounts))
+        property_row['Tax IDs'] = ' | '.join(tax_ids)
+        property_row['Tax Account Details'] = json.dumps(
+            account_details,
+            separators=(',', ':'),
+        )
+        issues = [
+            issue.strip()
+            for issue in str(property_row.get('Data Quality Issues') or '').split(';')
+            if issue.strip()
+        ]
+        base_score = score_lead(
+            aggregate_due,
+            str(property_row.get('Deceased Research Status') or ''),
+            str(property_row.get('Absentee Signal') or ''),
+            str(property_row.get('Owner Type') or ''),
+            issues,
+        )
+        verification_bonus = 5
+        vacancy_bonus = (
+            5 if str(property_row.get('Assessor Vacant') or '') == 'Yes' else 0
+        )
+        final_score = min(base_score + verification_bonus + vacancy_bonus, 100)
+        property_row['Lead Score'] = final_score
+        property_row['Lead Tier'] = (
+            'A' if final_score >= 75
+            else 'B' if final_score >= 58
+            else 'C'
+        )
+        property_row['Score Status'] = (
+            'Final - Assessor owner and account type verified'
+            + ('; vacant signal applied' if vacancy_bonus else '')
+        )
+        property_rows.append(property_row)
+
+    result = pd.DataFrame(property_rows)
+    return result.drop(
+        columns=['_property_lead_key', '_numeric_total_due'],
+        errors='ignore',
+    ).sort_values(
+        ['Lead Score', total_due_column],
+        ascending=[False, False],
+    )
+
+
+def _append_assessor_summary(run_summary, leads, properties):
+    decisions = (
+        leads['Current Owner Verification']
+        .fillna('Not checked')
+        .astype(str)
+        .value_counts()
+    )
+    approved_accounts = int(decisions.get('Verified candidate', 0))
+    review_accounts = int(decisions.get('Review', 0))
+    total_due_column = find_column(properties, ['TOTAL', 'DUE'])
+    total_debt = (
+        float(pd.to_numeric(
+            properties[total_due_column],
+            errors='coerce',
+        ).fillna(0).sum())
+        if total_due_column and not properties.empty
+        else 0
+    )
+    extra = pd.DataFrame(
+        [
+            (
+                'Assessor accounts checked',
+                int(len(leads)),
+                'All prequalified tax-account rows checked against the Assessor',
+            ),
+            (
+                'Verified tax accounts',
+                approved_accounts,
+                'Tax-account rows that passed current-owner and account-type checks',
+            ),
+            (
+                'Assessor review accounts',
+                review_accounts,
+                'Rows withheld from CRM pending human review',
+            ),
+            (
+                'CRM-ready properties',
+                int(len(properties)),
+                'One lead per unique Assessor property/PID',
+            ),
+            (
+                'Consolidated account rows',
+                approved_accounts - int(len(properties)),
+                'Additional tax-account rows merged into an existing property lead',
+            ),
+            (
+                'CRM-ready total debt',
+                total_debt,
+                'Sum of all verified tax-account debt, preserved after consolidation',
+            ),
+        ],
+        columns=run_summary.columns,
+    )
+    run_summary = run_summary[
+        ~run_summary['Control'].isin(extra['Control'])
+    ]
+    return pd.concat([run_summary, extra], ignore_index=True)
+
+
+def _apply_final_property_scores(leads, properties):
+    """Write final property-level scoring back to each verified account row."""
+    result = leads.copy()
+    if properties.empty:
+        return result
+    pid_column = find_column(result, ['PID'])
+    tax_id_column = find_column(result, ['TAX', 'ID'])
+    total_due_column = find_column(properties, ['TOTAL', 'DUE'])
+    property_by_key = properties.set_index('Property Lead Key')
+    for index, row in result.iterrows():
+        decision = str(row.get('Current Owner Verification') or '')
+        if decision != 'Verified candidate':
+            if decision == 'Review':
+                result.at[index, 'Lead Tier'] = 'Review'
+                result.at[index, 'Score Status'] = (
+                    'Review - Assessor verification requires a human decision'
+                )
+            continue
+        property_key = _property_lead_key(
+            row,
+            pid_column,
+            tax_id_column,
+        )
+        if property_key not in property_by_key.index:
+            continue
+        final = property_by_key.loc[property_key]
+        result.at[index, 'Lead Score'] = final['Lead Score']
+        result.at[index, 'Lead Tier'] = final['Lead Tier']
+        result.at[index, 'Score Status'] = final['Score Status']
+        result.at[index, 'Property Lead Key'] = property_key
+        result.at[index, 'Property Tax Account Count'] = int(
+            final['Tax Account Count']
+        )
+        result.at[index, 'Property Aggregate Debt'] = float(
+            final[total_due_column]
+        )
+    return result
+
+
 def _approved_import_snapshot(job_id):
     meta = load_job_meta(job_id)
     if not meta:
         raise FileNotFoundError('Processing job not found')
+    if meta.get('status') not in ('ready_for_approval', 'imported'):
+        raise ValueError(
+            'CRM import remains locked until Assessor verification is complete'
+        )
+    assessor_progress = meta.get('assessor_progress', {})
+    if int(assessor_progress.get('remaining', 0)) != 0:
+        raise ValueError(
+            'CRM import remains locked while Assessor records are unresolved'
+        )
     verified_filename = meta.get('assessor_output_filename')
     if not verified_filename:
         raise ValueError('Assessor verification has not produced an approved workbook')
@@ -1470,17 +1693,21 @@ def _approved_import_snapshot(job_id):
     )
     if 'Current Owner Verification' not in leads:
         raise ValueError('Current-owner decisions are missing')
-    approved = leads[
+    approved_accounts = leads[
         leads['Current Owner Verification'] == 'Verified candidate'
     ].copy()
+    approved = _finalize_verified_properties(leads)
     tax_id_column = find_column(approved, ['TAX', 'ID'])
+    total_due_column = find_column(approved, ['TOTAL', 'DUE'])
     owner_column = (
         'Current Assessor Owner'
         if 'Current Assessor Owner' in approved
         else find_column(approved, ['OWNER', 'NAME'])
     )
     identity_parts = [
-        f"{row.get(tax_id_column, '')}|{row.get(owner_column, '')}"
+        f"{row.get('Property Lead Key', '')}|"
+        f"{row.get(tax_id_column, '')}|{row.get(owner_column, '')}|"
+        f"{row.get(total_due_column, '')}"
         for _, row in approved.iterrows()
     ]
     token_payload = (
@@ -1488,7 +1715,6 @@ def _approved_import_snapshot(job_id):
         + '|'.join(sorted(identity_parts))
     )
     approval_token = hashlib.sha256(token_payload.encode()).hexdigest()
-    total_due_column = find_column(approved, ['TOTAL', 'DUE'])
     total_debt = (
         float(pd.to_numeric(approved[total_due_column], errors='coerce').fillna(0).sum())
         if total_due_column
@@ -1505,6 +1731,7 @@ def _approved_import_snapshot(job_id):
         'meta': meta,
         'verified_filename': verified_filename,
         'approved': approved,
+        'approved_accounts': approved_accounts,
         'approval_token': approval_token,
         'total_debt': total_debt,
         'decision_counts': {
@@ -1526,6 +1753,10 @@ def preview_approved_import(job_id):
             'success': True,
             'job_id': job_id,
             'approved_candidates': len(snapshot['approved']),
+            'approved_accounts': len(snapshot['approved_accounts']),
+            'consolidated_accounts': (
+                len(snapshot['approved_accounts']) - len(snapshot['approved'])
+            ),
             'total_debt': snapshot['total_debt'],
             'decision_counts': snapshot['decision_counts'],
             'approval_token': snapshot['approval_token'],
@@ -1556,6 +1787,21 @@ def commit_approved_import(job_id):
         return jsonify({'error': 'Explicit import confirmation is required'}), 400
 
     approved = snapshot['approved']
+    if snapshot['meta'].get('crm_import_approved_at'):
+        return jsonify(
+            {
+                'success': True,
+                'already_committed': True,
+                'approved_candidates': len(approved),
+                'approved_accounts': len(snapshot['approved_accounts']),
+                'consolidated_accounts': (
+                    len(snapshot['approved_accounts']) - len(approved)
+                ),
+                'imported': 0,
+                'duplicates_skipped': len(approved),
+                'crm_total': get_crm().dashboard_metrics()['actionable_leads'],
+            }
+        )
     columns = {
         'tax_id': find_column(approved, ['TAX', 'ID']),
         'owner_name': (
@@ -1593,7 +1839,8 @@ def commit_approved_import(job_id):
         'tax_year': snapshot['meta']['tax_year'],
         'stats': {
             **snapshot['meta'].get('stats', {}),
-            'approved_candidates': len(approved),
+            'approved_accounts': len(snapshot['approved_accounts']),
+            'approved_properties': len(approved),
         },
     }
     imported = get_crm().import_leads(approved, import_job, columns)
@@ -1608,6 +1855,10 @@ def commit_approved_import(job_id):
         {
             'success': True,
             'approved_candidates': len(approved),
+            'approved_accounts': len(snapshot['approved_accounts']),
+            'consolidated_accounts': (
+                len(snapshot['approved_accounts']) - len(approved)
+            ),
             'imported': imported,
             'duplicates_skipped': len(approved) - imported,
             'crm_total': get_crm().dashboard_metrics()['actionable_leads'],
@@ -1752,6 +2003,33 @@ def verify_assessor_batch(job_id):
         'ready_for_approval' if remaining == 0
         else 'assessor_in_progress'
     )
+    if remaining == 0:
+        crm_ready = _finalize_verified_properties(leads)
+        leads = _apply_final_property_scores(leads, crm_ready)
+        sheets['Prequalified - Verify'] = leads
+        sheets['CRM-Ready Properties'] = crm_ready
+        run_summary = sheets.get('Run Summary')
+        if run_summary is not None:
+            sheets['Run Summary'] = _append_assessor_summary(
+                run_summary,
+                leads,
+                crm_ready,
+            )
+        meta['assessor_progress']['verified_accounts'] = int(
+            counts.get('Verified candidate', 0)
+        )
+        meta['assessor_progress']['crm_ready_properties'] = int(len(crm_ready))
+        meta['assessor_progress']['consolidated_accounts'] = int(
+            counts.get('Verified candidate', 0) - len(crm_ready)
+        )
+        meta['assessor_progress']['crm_ready_total_debt'] = float(
+            pd.to_numeric(
+                crm_ready[find_column(crm_ready, ['TOTAL', 'DUE'])],
+                errors='coerce',
+            ).fillna(0).sum()
+        ) if not crm_ready.empty else 0
+        # Re-save now that the property-centric CRM sheet and summary exist.
+        save_excel_formatted(sheets, verified_path)
     save_job_meta(meta)
     persist_artifact(job_id, 'assessor', verified_filename, verified_path)
     return jsonify(

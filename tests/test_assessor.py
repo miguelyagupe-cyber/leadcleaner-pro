@@ -137,19 +137,55 @@ class AssessorTest(unittest.TestCase):
         dataframe = pd.DataFrame(
             [
                 {
+                    'Tax ID': 'TEST-1',
                     'PID': '12345-67-89-00001',
                     'Owner Name': 'DOE, JANE',
                     'Current Owner Verification': 'Not checked',
+                    'TotalDue': 1000,
+                    'ST_NO': '100',
+                    'ST_NAME': 'SAMPLE',
+                    'ST_STREET_TYPE': 'ST',
+                    'ST_CITY': 'TULSA',
+                    'Lead Score': 50,
+                    'Lead Tier': 'C',
+                    'Score Status': 'Preliminary',
+                    'Deceased Research Status': 'No text signal',
+                    'Owner Type': 'Individual / joint owners',
+                    'Data Quality Issues': '',
                 },
                 {
+                    'Tax ID': 'TEST-2',
                     'PID': '12345-67-89-00002',
                     'Owner Name': 'DOE, JANE',
                     'Current Owner Verification': 'Not checked',
+                    'TotalDue': 2000,
+                    'ST_NO': '200',
+                    'ST_NAME': 'SAMPLE',
+                    'ST_STREET_TYPE': 'ST',
+                    'ST_CITY': 'TULSA',
+                    'Lead Score': 50,
+                    'Lead Tier': 'C',
+                    'Score Status': 'Preliminary',
+                    'Deceased Research Status': 'No text signal',
+                    'Owner Type': 'Individual / joint owners',
+                    'Data Quality Issues': '',
                 },
                 {
+                    'Tax ID': 'TEST-3',
                     'PID': '12345-67-89-00003',
                     'Owner Name': 'DOE, JANE',
                     'Current Owner Verification': 'Not checked',
+                    'TotalDue': 3000,
+                    'ST_NO': '300',
+                    'ST_NAME': 'SAMPLE',
+                    'ST_STREET_TYPE': 'ST',
+                    'ST_CITY': 'TULSA',
+                    'Lead Score': 50,
+                    'Lead Tier': 'C',
+                    'Score Status': 'Preliminary',
+                    'Deceased Research Status': 'No text signal',
+                    'Owner Type': 'Individual / joint owners',
+                    'Data Quality Issues': '',
                 },
             ]
         )
@@ -194,6 +230,23 @@ class AssessorTest(unittest.TestCase):
             os.path.exists(
                 os.path.join(self.output_dir, second['download_file'])
             )
+        )
+        verified_sheets = pd.read_excel(
+            os.path.join(self.output_dir, second['download_file']),
+            sheet_name=None,
+            engine='openpyxl',
+        )
+        self.assertIn('CRM-Ready Properties', verified_sheets)
+        self.assertEqual(len(verified_sheets['CRM-Ready Properties']), 3)
+        self.assertTrue(
+            verified_sheets['CRM-Ready Properties']['Score Status']
+            .str.startswith('Final - Assessor')
+            .all()
+        )
+        self.assertTrue(
+            verified_sheets['Prequalified - Verify']['Score Status']
+            .str.startswith('Final - Assessor')
+            .all()
         )
 
     def test_retryable_failure_pauses_batch_and_remains_pending(self):

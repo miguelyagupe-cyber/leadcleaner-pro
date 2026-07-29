@@ -231,7 +231,7 @@ def resolve_columns(dataframe):
     )
 
 
-def _score(total_due, deceased_status, absentee_signal, owner_type, issues):
+def score_lead(total_due, deceased_status, absentee_signal, owner_type, issues):
     score = 40
     if total_due >= 10000:
         score += 30
@@ -253,6 +253,10 @@ def _score(total_due, deceased_status, absentee_signal, owner_type, issues):
         score += 2
     score -= 8 * len(issues)
     return max(0, min(score, 100))
+
+
+# Backwards-compatible private alias for older callers.
+_score = score_lead
 
 
 def qualify_leads(dataframe, selected_tax_year):
@@ -342,7 +346,7 @@ def qualify_leads(dataframe, selected_tax_year):
             decision = 'Review'
             reason = '; '.join(issues)
 
-        lead_score = _score(
+        lead_score = score_lead(
             total_due,
             deceased_status,
             absentee_signal,
