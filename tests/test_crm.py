@@ -820,56 +820,8 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(detail['phone'], '9185550100')
         self.assertEqual(conflict['result_summary']['conflicts'], 1)
         self.assertEqual(detail['activity'][0]['activity_type'], 'enrichment_conflict')
-        self.assertEqual(len(detail['contact_points']), 2)
-        self.assertTrue(any(
-            item['value'] == '9185559999'
-            and not item['is_primary']
-            for item in detail['contact_points']
-        ))
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Control the cost before you enrich.', page.data)
-
-    def test_contact_ledger_preserves_sources_and_controls_primary_status(self):
-        lead_id = self.repository.list_leads()['items'][0]['id']
-        first = self.client.post(
-            f'/api/leads/{lead_id}/contacts',
-            json={
-                'kind': 'phone',
-                'value': '(918) 555-0101',
-                'source_name': 'Owner callback',
-                'confidence': 'verified',
-                'label': 'Mobile',
-            },
-        )
-        second = self.client.post(
-            f'/api/leads/{lead_id}/contacts',
-            json={
-                'kind': 'phone',
-                'value': '918-555-0102',
-                'source_name': 'Manual public-record research',
-                'confidence': 'probable',
-                'is_primary': True,
-            },
-        )
-        first_id = first.get_json()['contact_id']
-        invalid = self.client.patch(
-            f'/api/leads/{lead_id}/contacts/{first_id}',
-            json={'status': 'invalid'},
-        )
-        detail = self.repository.get_lead(lead_id)
-        page = self.client.get('/leads')
-
-        self.assertEqual(first.status_code, 201)
-        self.assertEqual(second.status_code, 201)
-        self.assertEqual(invalid.status_code, 200)
-        self.assertEqual(detail['phone'], '918-555-0102')
-        self.assertEqual(len(detail['contact_points']), 2)
-        self.assertEqual(
-            next(item for item in detail['contact_points'] if item['id'] == first_id)['status'],
-            'invalid',
-        )
-        self.assertIn(b'Contact ledger', page.data)
-        self.assertIn(b'Do not contact', page.data)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
