@@ -57,6 +57,8 @@ EVIDENCE_TYPES = (
     'death_index',
     'death_certificate',
     'obituary',
+    'executor_appointment',
+    'heir_or_relative',
     'assessor_owner_change',
     'estate_text',
     'skip_trace_mismatch',
@@ -65,6 +67,15 @@ EVIDENCE_TYPES = (
 EVIDENCE_OUTCOMES = ('supports_deceased', 'supports_living', 'inconclusive')
 EVIDENCE_CONFIDENCE = ('confirmed', 'strong', 'weak', 'rejected')
 IDENTITY_MATCHES = ('exact', 'probable', 'uncertain', 'mismatch')
+PROBATE_CONTACT_ROLES = (
+    'executor',
+    'personal_representative',
+    'administrator',
+    'heir',
+    'relative',
+    'attorney',
+    'other',
+)
 CALL_OUTCOMES = (
     'no_answer',
     'voicemail_left',
@@ -121,6 +132,15 @@ RESEARCH_CATEGORY_DESCRIPTIONS = {
     'po_box': 'Owner receives correspondence through a post-office box',
     'mailing_city_mismatch': 'Mailing city differs from the property municipality',
     'other_mailing': 'Another mailing pattern requires human review',
+}
+PROBATE_STAGE_LABELS = {
+    'direct_signal': 'Direct estate signal',
+    'representative_signal': 'Representative candidate',
+    'evidence_review': 'Evidence in review',
+    'needs_resolution': 'Conflict to resolve',
+    'probable': 'Probable deceased',
+    'confirmed': 'Confirmed deceased',
+    'false_positive': 'False positive',
 }
 
 
@@ -422,6 +442,29 @@ class ResearchEvidence(Base):
     retraction_reason: Mapped[str | None] = mapped_column(Text)
 
 
+class ProbateContact(Base):
+    __tablename__ = 'probate_contacts'
+    __table_args__ = (
+        Index('idx_probate_contacts_lead', 'lead_id'),
+        Index('idx_probate_contacts_role', 'role'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey('leads.id', ondelete='CASCADE'), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    phone: Mapped[str | None] = mapped_column(Text)
+    email: Mapped[str | None] = mapped_column(Text)
+    source_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class AssessorVerification(Base):
     __tablename__ = 'assessor_verifications'
     __table_args__ = (Index('idx_assessor_status', 'status'),)
@@ -508,7 +551,12 @@ def summarize_evidence(items):
         and item.confidence == 'confirmed'
         and item.identity_match in ('exact', 'probable')
     ]
-    official_death_types = {'probate_case', 'death_index', 'death_certificate'}
+    official_death_types = {
+        'probate_case',
+        'death_index',
+        'death_certificate',
+        'executor_appointment',
+    }
     confirmed = [
         item for item in items
         if item.outcome == 'supports_deceased'
@@ -556,6 +604,23 @@ def summarize_evidence(items):
         'confirmed': False,
         'reason': 'Recorded evidence does not establish identity and death',
     }
+
+
+def probate_case_stage(lead, evidence_summary):
+    status = evidence_summary['status']
+    if status == 'confirmed_deceased':
+        return 'confirmed'
+    if status == 'probable_deceased':
+        return 'probable'
+    if status == 'false_positive':
+        return 'false_positive'
+    if status == 'conflicting_evidence':
+        return 'needs_resolution'
+    if status == 'inconclusive':
+        return 'evidence_review'
+    if lead.deceased_flag:
+        return 'direct_signal'
+    return 'representative_signal'
 
 
 class CRMRepository:
@@ -1048,6 +1113,11 @@ class CRMRepository:
                 .where(ResearchEvidence.lead_id == lead_id)
                 .order_by(ResearchEvidence.created_at.desc())
             ).all()
+            probate_contacts = session.scalars(
+                select(ProbateContact)
+                .where(ProbateContact.lead_id == lead_id)
+                .order_by(ProbateContact.created_at.desc())
+            ).all()
             return {
                 **_as_dict(lead),
                 'research_reason': research_reason(lead),
@@ -1057,7 +1127,131 @@ class CRMRepository:
                 'calls': [_as_dict(item) for item in calls],
                 'evidence': [_as_dict(item) for item in evidence],
                 'evidence_summary': summarize_evidence(evidence),
+                'probate_contacts': [
+                    _as_dict(item) for item in probate_contacts
+                ],
             }
+
+    def list_probate_cases(
+        self,
+        search='',
+        stage='',
+        page=1,
+        per_page=24,
+    ):
+        if stage and stage not in PROBATE_STAGE_LABELS:
+            raise ValueError('Invalid probate stage')
+        page = max(int(page), 1)
+        per_page = min(max(int(per_page), 1), 100)
+        needle = str(search or '').strip().lower()
+
+        with self.Session() as session:
+            leads = session.scalars(
+                select(Lead).order_by(Lead.updated_at.desc(), Lead.id.desc())
+            ).all()
+            evidence = session.scalars(
+                select(ResearchEvidence)
+                .where(ResearchEvidence.retracted_at.is_(None))
+                .order_by(ResearchEvidence.created_at.desc())
+            ).all()
+            contacts = session.scalars(select(ProbateContact)).all()
+
+        evidence_by_lead = {}
+        for item in evidence:
+            evidence_by_lead.setdefault(item.lead_id, []).append(item)
+        contact_counts = {}
+        for item in contacts:
+            contact_counts[item.lead_id] = (
+                contact_counts.get(item.lead_id, 0) + 1
+            )
+
+        all_items = []
+        for lead in leads:
+            lead_evidence = evidence_by_lead.get(lead.id, [])
+            category = research_category(lead)
+            if not (
+                lead.deceased_flag
+                or category == 'care_of_representative'
+                or lead_evidence
+            ):
+                continue
+            summary = summarize_evidence(lead_evidence)
+            case_stage = probate_case_stage(lead, summary)
+            haystack = ' '.join(
+                str(value or '').lower()
+                for value in (
+                    lead.owner_name,
+                    lead.property_address,
+                    lead.property_city,
+                    lead.tax_id,
+                )
+            )
+            lead_data = _as_dict(lead)
+            lead_data.pop('source_data_json', None)
+            all_items.append({
+                **lead_data,
+                **research_category_payload(lead),
+                'probate_stage': case_stage,
+                'probate_stage_label': PROBATE_STAGE_LABELS[case_stage],
+                'evidence_summary': summary,
+                'evidence_count': len(lead_evidence),
+                'probate_contact_count': contact_counts.get(lead.id, 0),
+                '_search_text': haystack,
+            })
+
+        stage_rank = {
+            'needs_resolution': 0,
+            'direct_signal': 1,
+            'probable': 2,
+            'evidence_review': 3,
+            'representative_signal': 4,
+            'confirmed': 5,
+            'false_positive': 6,
+        }
+        priority_rank = {'urgent': 0, 'high': 1, 'medium': 2, 'normal': 3}
+        all_items.sort(
+            key=lambda item: (
+                stage_rank[item['probate_stage']],
+                priority_rank.get(item['priority'], 9),
+                -float(item['total_due'] or 0),
+                -item['id'],
+            )
+        )
+        counts = {
+            stage_name: 0 for stage_name in PROBATE_STAGE_LABELS
+        }
+        for item in all_items:
+            counts[item['probate_stage']] += 1
+        items = [
+            item for item in all_items
+            if (not stage or item['probate_stage'] == stage)
+            and (not needle or needle in item['_search_text'])
+        ]
+        for item in items:
+            item.pop('_search_text', None)
+        total = len(items)
+        offset = (page - 1) * per_page
+        return {
+            'items': items[offset:offset + per_page],
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'pages': max((total + per_page - 1) // per_page, 1),
+            'stages': [
+                {
+                    'stage': stage_name,
+                    'label': label,
+                    'count': counts[stage_name],
+                }
+                for stage_name, label in PROBATE_STAGE_LABELS.items()
+            ],
+            'methodology': (
+                'This workspace contains direct estate signals, '
+                'representative-address candidates, and cases with recorded '
+                'death or probate evidence. A signal is never presented as '
+                'confirmed death without identity-matched official evidence.'
+            ),
+        }
 
     def update_lead(self, lead_id, changes):
         allowed = {
@@ -1261,6 +1455,55 @@ class CRMRepository:
         return {
             'evidence_id': evidence_id,
             'lead': detail,
+        }
+
+    def add_probate_contact(self, lead_id, payload):
+        name = str(payload.get('name', '')).strip()
+        role = str(payload.get('role', '')).strip()
+        source_name = str(payload.get('source_name', '')).strip()
+        if not name:
+            raise ValueError('Probate contact name is required')
+        if role not in PROBATE_CONTACT_ROLES:
+            raise ValueError('Invalid probate contact role')
+        if not source_name:
+            raise ValueError('Probate contact source is required')
+        source_url = str(payload.get('source_url', '')).strip() or None
+        if source_url and not source_url.startswith(('https://', 'http://')):
+            raise ValueError('Source URL must start with http:// or https://')
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            if not lead:
+                return None
+            contact = ProbateContact(
+                lead_id=lead_id,
+                name=name,
+                role=role,
+                phone=str(payload.get('phone', '')).strip() or None,
+                email=str(payload.get('email', '')).strip() or None,
+                source_name=source_name,
+                source_url=source_url,
+                notes=str(payload.get('notes', '')).strip() or None,
+                created_at=now,
+            )
+            session.add(contact)
+            session.flush()
+            contact_id = contact.id
+            session.add(
+                LeadActivity(
+                    lead_id=lead_id,
+                    activity_type='probate_contact_added',
+                    detail=(
+                        f"Probate contact added: {name} "
+                        f"({role.replace('_', ' ')})"
+                    ),
+                    created_at=now,
+                )
+            )
+            lead.updated_at = now
+        return {
+            'contact_id': contact_id,
+            'lead': self.get_lead(lead_id),
         }
 
     def retract_evidence(self, lead_id, evidence_id, reason):

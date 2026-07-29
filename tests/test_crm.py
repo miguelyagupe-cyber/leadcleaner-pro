@@ -444,6 +444,110 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'research_category', response.data)
         self.assertIn(b'research_category_label', response.data)
 
+    def test_probate_workspace_preserves_decisions_and_representatives(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        representative = self.dataframe.iloc[[1]].copy()
+        representative.loc[:, 'Tax ID'] = 'PROBATE-REPRESENTATIVE'
+        representative.loc[:, 'Owner Name'] = 'REPRESENTATIVE CANDIDATE'
+        representative.loc[
+            :, 'Absentee/Suspicious Mailing (Verify)'
+        ] = 'Care of'
+        self.repository.import_leads(
+            representative,
+            {
+                **self.job,
+                'uid': 'job-probate-representative',
+                'source_filename': 'probate-representative.xlsx',
+            },
+            self.columns,
+        )
+        evidence = self.repository.add_evidence(
+            lead_id,
+            {
+                'evidence_type': 'executor_appointment',
+                'outcome': 'supports_deceased',
+                'confidence': 'confirmed',
+                'identity_match': 'exact',
+                'source_name': 'Official probate docket',
+                'source_url': 'https://www.oscn.net/',
+                'case_number': 'PB-2026-101',
+                'subject_name': 'TEST OWNER ALPHA',
+            },
+        )
+        contact = self.repository.add_probate_contact(
+            lead_id,
+            {
+                'name': 'TEST EXECUTOR',
+                'role': 'executor',
+                'phone': '0000000001',
+                'email': 'executor@example.test',
+                'source_name': 'Official probate docket',
+                'source_url': 'https://www.oscn.net/',
+                'notes': 'Fictional test representative.',
+            },
+        )
+
+        workspace = self.repository.list_probate_cases()
+        confirmed = self.repository.list_probate_cases(stage='confirmed')
+        detail = self.repository.get_lead(lead_id)
+        page = self.client.get('/probate')
+        api = self.client.get('/api/probate?stage=confirmed').get_json()
+
+        self.assertEqual(
+            evidence['lead']['evidence_summary']['status'],
+            'confirmed_deceased',
+        )
+        self.assertEqual(contact['lead']['probate_contacts'][0]['role'], 'executor')
+        self.assertEqual(workspace['total'], 2)
+        self.assertEqual(confirmed['total'], 1)
+        self.assertEqual(confirmed['items'][0]['probate_stage'], 'confirmed')
+        self.assertEqual(
+            sum(item['count'] for item in confirmed['stages']),
+            workspace['total'],
+        )
+        self.assertEqual(
+            next(
+                item['count'] for item in confirmed['stages']
+                if item['stage'] == 'representative_signal'
+            ),
+            1,
+        )
+        self.assertEqual(detail['probate_contacts'][0]['name'], 'TEST EXECUTOR')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'Turn uncertainty into a verified case.', page.data)
+        self.assertIn(b'Executor, heir or representative', page.data)
+        self.assertIn(b'Open official source', page.data)
+        self.assertEqual(api['total'], 1)
+
+    def test_probate_contact_api_validates_and_records_source(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+
+        invalid = self.client.post(
+            f'/api/leads/{lead_id}/probate-contacts',
+            json={
+                'name': 'TEST PERSON',
+                'role': 'unknown-role',
+                'source_name': 'OSCN',
+            },
+        )
+        created = self.client.post(
+            f'/api/leads/{lead_id}/probate-contacts',
+            json={
+                'name': 'TEST HEIR',
+                'role': 'heir',
+                'phone': '0000000002',
+                'source_name': 'Published obituary',
+                'source_url': 'https://example.test/obituary',
+            },
+        )
+
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(
+            created.get_json()['lead']['probate_contacts'][0]['name'],
+            'TEST HEIR',
+        )
+
     def test_today_page_exposes_call_and_follow_up_workspace(self):
         response = self.client.get('/today')
 
