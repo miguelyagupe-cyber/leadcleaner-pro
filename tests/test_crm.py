@@ -102,6 +102,39 @@ class CRMTest(unittest.TestCase):
         )
         self.assertEqual(all_leads['items'][0]['priority'], 'high')
         self.assertEqual(all_leads['items'][0]['status'], 'research_needed')
+        self.assertEqual(
+            all_leads['items'][0]['research_reason'],
+            'Deceased-owner signal · Mailing signal: Strong',
+        )
+
+    def test_detailed_mailing_signal_uses_the_same_research_queue_rule(self):
+        dataframe = self.dataframe.iloc[[1]].copy()
+        dataframe.loc[:, 'Tax ID'] = 'C-300'
+        dataframe.loc[:, 'Owner Name'] = 'TEST OWNER GAMMA'
+        dataframe.loc[:, 'Absentee/Suspicious Mailing (Verify)'] = (
+            'Out of state; Different mailing city'
+        )
+        job = {
+            **self.job,
+            'uid': 'job-detailed-mailing-signal',
+            'source_filename': 'tulsa-detailed-signal.xlsx',
+        }
+        self.repository.import_leads(dataframe, job, self.columns)
+
+        research = self.repository.list_leads(research_only=True)
+        gamma = next(
+            item for item in research['items']
+            if item['tax_id'] == 'C-300'
+        )
+        metrics = self.repository.dashboard_metrics()
+
+        self.assertEqual(gamma['status'], 'research_needed')
+        self.assertEqual(
+            gamma['research_reason'],
+            'Mailing signal: Out of state; Different mailing city',
+        )
+        self.assertEqual(research['total'], 2)
+        self.assertEqual(metrics['research_queue'], research['total'])
 
     def test_api_updates_workflow_and_adds_note(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
@@ -487,7 +520,52 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'One property. One source of truth.', page.data)
         self.assertEqual(api['total'], 1)
-        self.assertIn('most recently updated record', api['methodology'])
+        self.assertIn('Tulsa County parcel/PID', api['methodology'])
+
+    def test_property_workspace_uses_pid_and_assessor_source_context(self):
+        first = self.dataframe.iloc[[1]].copy()
+        first.loc[:, 'Tax ID'] = 'TAX-ONE'
+        first.loc[:, 'Owner Name'] = 'FORMER LIST OWNER'
+        first.loc[:, 'PID'] = '12345-67-89-00001'
+        first.loc[:, 'Property Lead Key'] = 'pid:R12345678900001'
+        first.loc[:, 'Tax IDs'] = 'TAX-ONE | TAX-TWO'
+        first.loc[:, 'Current Owner Verification'] = 'Verified candidate'
+        first.loc[:, 'Current Assessor Owner'] = 'CURRENT ASSESSOR OWNER'
+        first.loc[:, 'Assessor URL'] = 'https://example.test/assessor/R12345678900001'
+
+        second = first.copy()
+        second.loc[:, 'Tax ID'] = 'TAX-TWO'
+        second.loc[:, 'TotalDue'] = 9900
+
+        first_job = {
+            **self.job,
+            'uid': 'job-pid-one',
+            'source_filename': 'pid-one.xlsx',
+        }
+        second_job = {
+            **self.job,
+            'uid': 'job-pid-two',
+            'source_filename': 'pid-two.xlsx',
+        }
+        self.repository.import_leads(first, first_job, self.columns)
+        self.repository.import_leads(second, second_job, self.columns)
+
+        properties = self.repository.list_properties(search='12345-67-89-00001')
+        property_item = properties['items'][0]
+
+        self.assertEqual(properties['total'], 1)
+        self.assertEqual(property_item['record_count'], 2)
+        self.assertEqual(property_item['property_key'], 'pid:R12345678900001')
+        self.assertEqual(property_item['parcel_id'], '12345-67-89-00001')
+        self.assertEqual(property_item['tax_ids'], 'TAX-ONE | TAX-TWO')
+        self.assertEqual(
+            property_item['current_owner_verification'],
+            'Verified candidate',
+        )
+        self.assertEqual(
+            property_item['current_assessor_owner'],
+            'CURRENT ASSESSOR OWNER',
+        )
 
     def test_acquisition_report_uses_recorded_crm_facts(self):
         lead_id = self.repository.list_leads()['items'][0]['id']

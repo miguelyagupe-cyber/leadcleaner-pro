@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from sqlalchemy import (
+    and_,
     Boolean,
     DateTime,
     Float,
@@ -97,6 +98,83 @@ CALL_OUTCOMES_REQUIRING_FOLLOW_UP = (
 
 def utc_now():
     return datetime.now(timezone.utc)
+
+
+def research_queue_condition():
+    """Canonical definition shared by queue and dashboard metrics."""
+    return and_(
+        Lead.status == 'research_needed',
+        Lead.research_status.in_(('unreviewed', 'in_progress')),
+    )
+
+
+def research_reason(lead):
+    reasons = []
+    if lead.deceased_flag:
+        reasons.append('Deceased-owner signal')
+    mailing_signal = str(lead.mailing_signal or '').strip()
+    if mailing_signal:
+        reasons.append(f'Mailing signal: {mailing_signal}')
+    return ' · '.join(reasons) or 'No active research signal'
+
+
+def _lead_source_payload(lead):
+    try:
+        payload = json.loads(lead.source_data_json or '{}')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _clean_source_identifier(value):
+    if value is None:
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _lead_property_identity(lead):
+    payload = _lead_source_payload(lead)
+    explicit = str(payload.get('Property Lead Key') or '').strip()
+    if explicit:
+        prefix, separator, identifier = explicit.partition(':')
+        if separator and prefix.lower() == 'pid':
+            return f'pid:{identifier.strip().upper()}'
+        return explicit.lower()
+    pid = _clean_source_identifier(payload.get('PID'))
+    normalized_pid = ''.join(character for character in pid if character.isalnum())
+    if normalized_pid:
+        if not normalized_pid.upper().startswith('R'):
+            normalized_pid = f'R{normalized_pid}'
+        return f'pid:{normalized_pid.upper()}'
+    return (
+        f"address:{(lead.property_address or '').strip().upper()}|"
+        f"{(lead.property_city or '').strip().upper()}"
+    )
+
+
+def _lead_assessor_account_no(lead):
+    identity = _lead_property_identity(lead)
+    if identity.startswith('pid:'):
+        return identity.split(':', 1)[1].strip().upper()
+    return ''
+
+
+def _lead_property_context(lead):
+    payload = _lead_source_payload(lead)
+    return {
+        'property_key': _lead_property_identity(lead),
+        'parcel_id': _clean_source_identifier(payload.get('PID')),
+        'tax_ids': str(payload.get('Tax IDs') or lead.tax_id or '').strip(),
+        'current_owner_verification': str(
+            payload.get('Current Owner Verification') or ''
+        ).strip(),
+        'current_assessor_owner': str(
+            payload.get('Current Assessor Owner') or ''
+        ).strip(),
+        'assessor_url': str(payload.get('Assessor URL') or '').strip(),
+    }
 
 
 def normalize_database_url(database_target):
@@ -750,12 +828,7 @@ class CRMRepository:
         if priority in CRM_PRIORITIES:
             conditions.append(Lead.priority == priority)
         if research_only:
-            conditions.append(
-                or_(
-                    Lead.deceased_flag.is_(True),
-                    Lead.mailing_signal.in_(('Strong', 'Weak')),
-                )
-            )
+            conditions.append(research_queue_condition())
         if follow_up == 'due':
             conditions.extend(
                 (
@@ -809,7 +882,12 @@ class CRMRepository:
 
         return {
             'items': [
-                {**_as_dict(lead), 'latest_note': note} for lead, note in rows
+                {
+                    **_as_dict(lead),
+                    'latest_note': note,
+                    'research_reason': research_reason(lead),
+                }
+                for lead, note in rows
             ],
             'total': total,
             'page': page,
@@ -844,6 +922,7 @@ class CRMRepository:
             ).all()
             return {
                 **_as_dict(lead),
+                'research_reason': research_reason(lead),
                 'notes': [_as_dict(note) for note in notes],
                 'activity': [_as_dict(item) for item in activity],
                 'calls': [_as_dict(item) for item in calls],
@@ -1099,13 +1178,6 @@ class CRMRepository:
         return self.get_lead(lead_id)
 
     def dashboard_metrics(self):
-        active_research = (
-            Lead.research_status.in_(('unreviewed', 'in_progress')),
-            or_(
-                Lead.deceased_flag.is_(True),
-                Lead.mailing_signal.in_(('Strong', 'Weak')),
-            ),
-        )
         today = date.today().isoformat()
         with self.Session() as session:
             total = session.scalar(select(func.count()).select_from(Lead)) or 0
@@ -1115,7 +1187,9 @@ class CRMRepository:
                 .where(Lead.deceased_flag.is_(True))
             ) or 0
             research = session.scalar(
-                select(func.count()).select_from(Lead).where(*active_research)
+                select(func.count())
+                .select_from(Lead)
+                .where(research_queue_condition())
             ) or 0
             contacts = session.scalar(
                 select(func.count())
@@ -1242,27 +1316,23 @@ class CRMRepository:
 
         grouped = {}
         for lead in leads:
-            identity = (
-                f"tax:{lead.tax_id.strip().upper()}"
-                if lead.tax_id and lead.tax_id.strip()
-                else (
-                    f"address:{(lead.property_address or '').strip().upper()}|"
-                    f"{(lead.property_city or '').strip().upper()}"
-                )
-            )
+            identity = _lead_property_identity(lead)
             if identity not in grouped:
                 lead_data = _as_dict(lead)
                 lead_data.pop('source_data_json', None)
+                context = _lead_property_context(lead)
+                assessor_record = assessor.get(
+                    _lead_assessor_account_no(lead)
+                )
                 grouped[identity] = {
                     **lead_data,
+                    **context,
                     'lead_id': lead.id,
                     'record_count': 0,
                     'tax_years': [],
                     'evidence_count': 0,
                     'call_count': 0,
-                    'assessor_verification': assessor.get(
-                        (lead.tax_id or '').strip().upper()
-                    ),
+                    'assessor_verification': assessor_record,
                 }
             item = grouped[identity]
             item['record_count'] += 1
@@ -1281,6 +1351,8 @@ class CRMRepository:
                     'property_address',
                     'property_city',
                     'tax_id',
+                    'parcel_id',
+                    'tax_ids',
                 )
             )
             if needle and needle not in haystack:
@@ -1306,8 +1378,9 @@ class CRMRepository:
             'per_page': per_page,
             'pages': max((total + per_page - 1) // per_page, 1),
             'methodology': (
-                'One card per Tax ID (or property address when Tax ID is '
-                'missing). Values come from the most recently updated record.'
+                'One card per Tulsa County parcel/PID. Multiple tax accounts '
+                'remain attached to the same property and their verified debt '
+                'is shown as one consolidated total.'
             ),
         }
 
@@ -1332,14 +1405,7 @@ class CRMRepository:
 
         current_by_property = {}
         for lead in all_leads:
-            identity = (
-                f"tax:{lead.tax_id.strip().upper()}"
-                if lead.tax_id and lead.tax_id.strip()
-                else (
-                    f"address:{(lead.property_address or '').strip().upper()}|"
-                    f"{(lead.property_city or '').strip().upper()}"
-                )
-            )
+            identity = _lead_property_identity(lead)
             current_by_property.setdefault(identity, lead)
         leads = list(current_by_property.values())
 
