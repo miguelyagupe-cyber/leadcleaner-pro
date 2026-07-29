@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 import io
@@ -6,7 +7,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from app import app
+from app import app, get_crm
 from crm import CRMRepository
 
 
@@ -252,6 +253,26 @@ class CRMTest(unittest.TestCase):
     def test_health_reports_database_dialect(self):
         health = self.client.get('/api/health').get_json()
         self.assertEqual(health, {'status': 'ok', 'database': 'sqlite'})
+
+    def test_repository_is_reused_for_the_same_database(self):
+        first = get_crm()
+        second = get_crm()
+
+        self.assertIs(first, second)
+        self.assertIs(first.engine, second.engine)
+
+    def test_health_does_not_initialize_schema(self):
+        empty_database = os.path.join(self.temp_dir.name, 'health-only.db')
+        app.config['CRM_DATABASE'] = empty_database
+
+        response = self.client.get('/api/health')
+
+        self.assertEqual(response.status_code, 200)
+        with sqlite3.connect(empty_database) as connection:
+            tables = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        self.assertEqual(tables, [])
 
     def test_call_outcome_updates_pipeline_and_creates_follow_up(self):
         lead_id = self.repository.list_leads()['items'][0]['id']

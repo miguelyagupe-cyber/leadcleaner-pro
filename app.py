@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import io
 import secrets
+import threading
 import time
 import requests
 from datetime import datetime, timedelta
@@ -68,6 +69,8 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 LOGIN_ATTEMPTS = {}
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_ATTEMPTS = 5
+CRM_REPOSITORIES = {}
+CRM_REPOSITORIES_LOCK = threading.Lock()
 
 
 def authentication_configured():
@@ -196,10 +199,17 @@ def logout():
     return redirect(url_for('login'))
 
 
-def get_crm():
+def get_crm(initialize=True):
     database_target = app.config.get('DATABASE_URL') or app.config['CRM_DATABASE']
-    repository = CRMRepository(database_target)
-    repository.initialize()
+    repository = CRM_REPOSITORIES.get(database_target)
+    if repository is None:
+        with CRM_REPOSITORIES_LOCK:
+            repository = CRM_REPOSITORIES.get(database_target)
+            if repository is None:
+                repository = CRMRepository(database_target)
+                CRM_REPOSITORIES[database_target] = repository
+    if initialize:
+        repository.initialize()
     return repository
 
 
@@ -1277,7 +1287,7 @@ def api_import_enrichment_results(batch_id):
 
 @app.route('/api/health')
 def api_health():
-    return jsonify(get_crm().health())
+    return jsonify(get_crm(initialize=False).health())
 
 
 @app.route('/api/leads/<int:lead_id>')
