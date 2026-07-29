@@ -30,11 +30,12 @@ from crm import (
     EVIDENCE_TYPES,
     IDENTITY_MATCHES,
     PIPELINE_STAGES,
+    PROBATE_CONTACT_ROLES,
     RESEARCH_STATUSES,
     CRMRepository,
 )
 from qualification import QUALIFICATION_ENGINE_VERSION, qualify_leads, score_lead
-from research_plan import build_research_plan
+from research_plan import OFFICIAL_RESEARCH_SOURCES, build_research_plan
 from assessor import (
     RETRYABLE_STATUSES,
     AssessorResult,
@@ -1057,6 +1058,33 @@ def research_page():
     )
 
 
+@app.route('/probate')
+def probate_page():
+    return render_template(
+        'probate.html',
+        evidence_types=EVIDENCE_TYPES,
+        evidence_outcomes=EVIDENCE_OUTCOMES,
+        evidence_confidence=EVIDENCE_CONFIDENCE,
+        identity_matches=IDENTITY_MATCHES,
+        probate_contact_roles=PROBATE_CONTACT_ROLES,
+        research_sources=OFFICIAL_RESEARCH_SOURCES,
+    )
+
+
+@app.route('/api/probate')
+def api_probate():
+    try:
+        result = get_crm().list_probate_cases(
+            search=request.args.get('q', '').strip(),
+            stage=request.args.get('stage', '').strip(),
+            page=request.args.get('page', 1),
+            per_page=request.args.get('per_page', 24),
+        )
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Invalid probate filter value'}), 400
+    return jsonify(result)
+
+
 @app.route('/api/leads')
 def api_leads():
     try:
@@ -1302,6 +1330,18 @@ def api_add_lead_evidence(lead_id):
     payload = request.get_json(silent=True) or {}
     try:
         result = get_crm().add_evidence(lead_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not result:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, **result}), 201
+
+
+@app.route('/api/leads/<int:lead_id>/probate-contacts', methods=['POST'])
+def api_add_probate_contact(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = get_crm().add_probate_contact(lead_id, payload)
     except ValueError as error:
         return jsonify({'error': str(error)}), 400
     if not result:
