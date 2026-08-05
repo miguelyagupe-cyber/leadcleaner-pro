@@ -50,8 +50,10 @@ from assessor import (
 from calendar_export import event_ics, follow_up_event, google_calendar_url
 from alert_email import send_alert_digest
 from alert_sms import send_alert_sms
+from runtime_config import production_readiness
 
 app = Flask(__name__)
+app.config['SECRET_KEY_CONFIGURED'] = bool(os.environ.get('SECRET_KEY'))
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
 app.config['APP_LOGIN_EMAIL'] = os.environ.get('APP_LOGIN_EMAIL', '').strip().lower()
 app.config['APP_LOGIN_PASSWORD'] = os.environ.get('APP_LOGIN_PASSWORD', '')
@@ -120,7 +122,7 @@ def protect_private_workspace():
     if app.config.get('TESTING') and not app.config.get('TEST_AUTH_ENABLED'):
         return None
     if request.endpoint in (
-        'login', 'api_health', 'api_deliver_alert_emails',
+        'login', 'api_health', 'api_readiness', 'api_deliver_alert_emails',
         'api_deliver_alert_sms',
     ) or request.endpoint == 'static':
         return None
@@ -1372,6 +1374,19 @@ def api_import_enrichment_results(batch_id):
 @app.route('/api/health')
 def api_health():
     return jsonify(get_crm(initialize=False).health())
+
+
+@app.route('/api/readiness')
+def api_readiness():
+    readiness = production_readiness(app.config)
+    try:
+        readiness['database'] = get_crm(initialize=False).health()['database']
+    except Exception:
+        readiness['database'] = 'unavailable'
+        readiness['invalid'] = sorted(set(readiness['invalid'] + ['DATABASE_CONNECTION']))
+        readiness['status'] = 'not_ready'
+    status_code = 200 if readiness['status'] == 'ready' else 503
+    return jsonify(readiness), status_code
 
 
 @app.route('/api/leads/<int:lead_id>')
