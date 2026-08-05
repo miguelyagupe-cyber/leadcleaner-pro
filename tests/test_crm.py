@@ -1066,6 +1066,44 @@ class CRMTest(unittest.TestCase):
 
         self.assertIsNone(updated['phone'])
 
+    def test_enrichment_does_not_reactivate_non_active_contact(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test repeat enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        recorded = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '9185550100',
+                'source_name': 'Manual verification',
+                'confidence': 'verified',
+            },
+        )
+        self.repository.update_contact_point(
+            lead_id,
+            recorded['contact_id'],
+            {'status': 'do_not_contact'},
+        )
+
+        result = self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead_id, 'Phone': '(918) 555-0100'}],
+        )
+        detail = self.repository.get_lead(lead_id)
+        contact = next(
+            item for item in detail['contact_points']
+            if item['id'] == recorded['contact_id']
+        )
+
+        self.assertIsNone(detail['phone'])
+        self.assertEqual(contact['status'], 'do_not_contact')
+        self.assertFalse(contact['is_primary'])
+        self.assertEqual(result['result_summary']['leads_updated'], 0)
+
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
         added = self.repository.add_evidence(
