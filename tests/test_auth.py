@@ -52,6 +52,15 @@ class AuthenticationTest(unittest.TestCase):
         self.assertEqual(response.headers['X-Content-Type-Options'], 'nosniff')
         self.assertIn("frame-ancestors 'none'", response.headers['Content-Security-Policy'])
 
+    def test_readiness_is_public_but_rejects_incomplete_production_config(self):
+        response = self.client.get('/api/readiness')
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertEqual(payload['status'], 'not_ready')
+        self.assertIn('DATABASE_URL', payload['missing'])
+        self.assertNotIn('fictional-password', response.get_data(as_text=True))
+
     def test_valid_login_creates_private_session(self):
         response = self._login()
 
