@@ -1,5 +1,12 @@
 # LeadCleaner Pro — Setup Instructions
 
+## V1 release status
+
+The complete V1 workflow is implemented and covered by the automated test
+suite. Every pull request now runs the full suite in GitHub Actions. Production
+configuration is declared in `render.yaml`; `.env.example` is the authoritative
+inventory of required and optional settings and contains no usable secrets.
+
 ## First Time Setup (do this once)
 
 Open your terminal and run these commands one by one:
@@ -344,6 +351,12 @@ credentials:
 GET /api/health
 {"database":"postgresql","status":"ok"}
 ```
+
+Render uses `GET /api/readiness` for deployment readiness. It returns HTTP 200
+only when PostgreSQL, private access, secrets, and every enabled optional
+integration form a complete production configuration. The response contains
+only missing or invalid variable names, never their values. Use `/api/health`
+for liveness and `/api/readiness` for release/deployment checks.
 
 Do not commit or paste the database URL into source code, issues, or chat.
 
