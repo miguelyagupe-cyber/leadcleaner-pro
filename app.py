@@ -50,6 +50,7 @@ from assessor import (
 from calendar_export import event_ics, follow_up_event, google_calendar_url
 from alert_email import send_alert_digest
 from alert_sms import send_alert_sms
+from skip_trace import TracerfyProvider
 from runtime_config import production_readiness
 
 app = Flask(__name__)
@@ -85,6 +86,8 @@ app.config['ALERT_SMS_FROM'] = os.environ.get('ALERT_SMS_FROM', '')
 app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID', '')
 app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN', '')
 app.config['ALERT_SMS_HTTP'] = requests
+app.config['TRACERFY_API_TOKEN'] = os.environ.get('TRACERFY_API_TOKEN', '')
+app.config['SKIP_TRACE_HTTP'] = requests
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -873,7 +876,7 @@ def index():
     return render_template('index.html')
 
 
-def get_dashboard_snapshot():
+def get_dashboard_snapshot(campaign_id=None):
     """Build the dashboard from completed processing jobs.
 
     PostgreSQL is the durable source of truth. The local output directory is
@@ -881,6 +884,9 @@ def get_dashboard_snapshot():
     """
     jobs = []
     repository = get_crm()
+    campaign_job_id = None
+    if campaign_id:
+        campaign_job_id = repository._campaign_job_id(campaign_id)
     stored_jobs = repository.list_processing_jobs(limit=20)
     stored_ids = {meta.get('uid') for meta in stored_jobs}
     # Preserve visibility of jobs created before durable storage was deployed.
@@ -903,6 +909,8 @@ def get_dashboard_snapshot():
         stored_jobs.append(meta)
 
     for meta in stored_jobs:
+        if campaign_job_id and meta.get('uid') != campaign_job_id:
+            continue
         output_filename = meta.get(
             'assessor_output_filename',
             meta.get('output_filename', ''),
@@ -946,7 +954,7 @@ def get_dashboard_snapshot():
     latest = jobs[0] if jobs else None
     latest_stats = latest['stats'] if latest else {}
 
-    crm_metrics = get_crm().dashboard_metrics()
+    crm_metrics = repository.dashboard_metrics(campaign_id)
     has_crm_data = crm_metrics['actionable_leads'] > 0
     metrics = crm_metrics if has_crm_data else {
         'actionable_leads': int(latest_stats.get('final', 0)),
@@ -1009,7 +1017,10 @@ def get_dashboard_snapshot():
 
 @app.route('/api/dashboard')
 def dashboard_snapshot():
-    return jsonify(get_dashboard_snapshot())
+    try:
+        return jsonify(get_dashboard_snapshot(request.args.get('campaign_id')))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
 
 
 @app.route('/leads')
@@ -1153,6 +1164,7 @@ def api_leads():
             follow_up=request.args.get('follow_up', '').strip(),
             page=request.args.get('page', 1),
             per_page=request.args.get('per_page', 50),
+            campaign_id=request.args.get('campaign_id'),
         )
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pagination or filter value'}), 400
@@ -1163,7 +1175,8 @@ def api_leads():
 def api_pipeline():
     try:
         board = get_crm().pipeline_board(
-            cards_per_stage=request.args.get('cards_per_stage', 50)
+            cards_per_stage=request.args.get('cards_per_stage', 50),
+            campaign_id=request.args.get('campaign_id'),
         )
     except (TypeError, ValueError):
         return jsonify({'error': 'Invalid pipeline limit'}), 400
@@ -1191,7 +1204,28 @@ def api_acquisition_report():
 
 @app.route('/api/enrichment')
 def api_enrichment_summary():
-    return jsonify(get_crm().enrichment_summary())
+    try:
+        return jsonify(get_crm().enrichment_summary(request.args.get('campaign_id')))
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+
+
+@app.route('/api/campaigns')
+def api_campaigns():
+    return jsonify({'campaigns': get_crm().list_campaigns()})
+
+
+@app.route('/api/campaigns/<int:campaign_id>', methods=['PATCH'])
+def api_update_campaign(campaign_id):
+    try:
+        campaign = get_crm().update_campaign(
+            campaign_id, request.get_json(silent=True) or {}
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    if not campaign:
+        return jsonify({'error': 'Campaign not found'}), 404
+    return jsonify({'success': True, 'campaign': campaign})
 
 
 @app.route('/api/imports')
@@ -1324,10 +1358,28 @@ def api_create_enrichment_batch():
             cost_per_record=payload.get('cost_per_record'),
             budget_cap=payload.get('budget_cap'),
             max_records=payload.get('max_records', 5000),
+            campaign_id=payload.get('campaign_id'),
+            selection_mode=payload.get('selection_mode', 'high_priority'),
+            lead_ids=payload.get('lead_ids'),
         )
     except ValueError as error:
         return jsonify({'error': str(error)}), 400
     return jsonify({'success': True, 'batch': batch}), 201
+
+
+@app.route('/api/enrichment/batches/<batch_id>/execute', methods=['POST'])
+def api_execute_enrichment_batch(batch_id):
+    try:
+        provider = TracerfyProvider(
+            app.config.get('TRACERFY_API_TOKEN'),
+            http=app.config.get('SKIP_TRACE_HTTP'),
+        )
+        batch = get_crm().execute_skip_trace_batch(batch_id, provider)
+    except (ValueError, RuntimeError) as error:
+        return jsonify({'error': str(error)}), 400
+    if not batch:
+        return jsonify({'error': 'Skip trace batch not found'}), 404
+    return jsonify({'success': True, 'batch': batch})
 
 
 @app.route('/api/enrichment/batches/<batch_id>/export')

@@ -360,6 +360,21 @@ for liveness and `/api/readiness` for release/deployment checks.
 
 Do not commit or paste the database URL into source code, issues, or chat.
 
+### Campaign workspaces and selective skip trace
+
+Every approved import creates an independent campaign. Dashboard, lead queue,
+pipeline and skip-trace eligibility can be scoped to that campaign, while
+contact intelligence is inherited when the same property returns in a later
+list. Campaigns can be completed or archived without deleting audit history.
+
+Selective skip tracing uses Tracerfy's synchronous owner-lookup API. Configure
+`TRACERFY_API_TOKEN`, select a campaign, and choose high-priority or
+potentially-deceased candidates. The UI shows a hard maximum before a second
+execution confirmation. Results enter the Contact Ledger directly; DNC/TCPA
+numbers are blocked and provider, actual cost, misses, and failures remain
+auditable. The adapter is isolated in `skip_trace.py`, so a provider can be
+replaced without changing the CRM domain model.
+
 ---
 
 ## To stop the app

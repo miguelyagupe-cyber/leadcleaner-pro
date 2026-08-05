@@ -312,7 +312,7 @@
     <main>
       <header class="topbar">
         <div class="workspace-label">Tulsa County <span>/</span> Acquisition Intelligence</div>
-        <div class="status-set"><div class="status-live">System operational</div><button class="top-icon" aria-label="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></button></div>
+        <div class="status-set"><select id="campaign-filter" style="background:#111214;color:#d8bd79;border:1px solid #292a2f;padding:8px"><option value="">All campaigns</option></select><div class="status-live">System operational</div><button class="top-icon" aria-label="Notifications"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></button></div>
       </header>
 
       <div class="content">
@@ -382,6 +382,7 @@
 
   <script>
     const $ = id => document.getElementById(id);
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
     const modal = $('import-modal');
     const fileInput = $('file-input');
     const dropZone = $('drop-zone');
@@ -694,7 +695,8 @@
 
     async function loadDashboard() {
       try {
-        const response = await fetch('/api/dashboard');
+        const campaign=$('campaign-filter').value;
+        const response = await fetch(`/api/dashboard${campaign?`?campaign_id=${encodeURIComponent(campaign)}`:''}`);
         const data = await response.json();
         const metrics = data.metrics || {};
         $('metric-leads').textContent = nf.format(metrics.actionable_leads || 0);
@@ -730,7 +732,9 @@
     $('command-form').addEventListener('submit', event => { event.preventDefault(); runCommand($('command-input').value); });
     document.querySelectorAll('[data-command]').forEach(button => button.addEventListener('click', () => { $('command-input').value = button.dataset.command; runCommand(button.dataset.command); }));
     document.addEventListener('keydown', event => { if (event.key === 'Escape') closeImport(); });
-    loadDashboard();
+    async function loadCampaigns(){const response=await fetch('/api/campaigns'),data=await response.json();$('campaign-filter').innerHTML='<option value="">All campaigns</option>'+data.campaigns.map(item=>`<option value="${item.id}">${esc(item.name)} · ${nf.format(item.lead_count)}</option>`).join('')}
+    $('campaign-filter').addEventListener('change',loadDashboard);
+    loadCampaigns().then(loadDashboard);
     loadAlertCount();
     const resumeId = new URLSearchParams(window.location.search).get('resume');
     if (resumeId) resumeJob(resumeId);

@@ -3,6 +3,7 @@ import os
 import re
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -82,6 +83,8 @@ PROBATE_CONTACT_ROLES = (
 CONTACT_KINDS = ('phone', 'email')
 CONTACT_CONFIDENCE = ('unverified', 'probable', 'verified')
 CONTACT_STATUSES = ('active', 'invalid', 'do_not_contact')
+CAMPAIGN_STATUSES = ('active', 'completed', 'archived')
+SKIP_TRACE_SELECTIONS = ('high_priority', 'potentially_deceased', 'manual')
 CALL_OUTCOMES = (
     'no_answer',
     'voicemail_left',
@@ -308,6 +311,18 @@ class ImportRun(Base):
     tax_year: Mapped[int] = mapped_column(Integer, nullable=False)
     stats_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Campaign(Base):
+    __tablename__ = 'campaigns'
+    __table_args__ = (Index('idx_campaign_status', 'status'),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    source_job_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='active')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ProcessingJob(Base):
@@ -547,6 +562,10 @@ class EnrichmentBatch(Base):
     result_summary_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    campaign_id: Mapped[int | None] = mapped_column(ForeignKey('campaigns.id'))
+    selection_mode: Mapped[str | None] = mapped_column(String(30))
+    actual_cost: Mapped[float | None] = mapped_column(Float)
+    error_json: Mapped[str | None] = mapped_column(Text)
 
 
 class DailyCheckIn(Base):
@@ -886,6 +905,19 @@ class CRMRepository:
         now = utc_now()
         imported = 0
         with self.Session.begin() as session:
+            campaign = session.scalar(
+                select(Campaign).where(Campaign.source_job_id == job['uid'])
+            )
+            if not campaign:
+                campaign = Campaign(
+                    name=str(job.get('campaign_name') or (
+                        f"{os.path.splitext(job['source_filename'])[0]} · "
+                        f"{job['tax_year']}"
+                    )).strip(),
+                    source_job_id=job['uid'], status='active',
+                    created_at=now, updated_at=now,
+                )
+                session.add(campaign)
             import_run = session.scalar(
                 select(ImportRun).where(ImportRun.job_id == job['uid'])
             )
@@ -988,8 +1020,49 @@ class CRMRepository:
                 )
                 session.add(lead)
                 session.flush()
+                prior_lead = session.scalar(
+                    select(Lead).where(
+                        Lead.id != lead.id,
+                        Lead.source_job_id != job['uid'],
+                        or_(
+                            and_(
+                                Lead.tax_id == tax_id,
+                                Lead.tax_id.is_not(None),
+                                Lead.tax_id != '',
+                            ),
+                            and_(
+                                Lead.property_address == property_address,
+                                Lead.property_city == lead.property_city,
+                            ),
+                        ),
+                    ).order_by(Lead.updated_at.desc())
+                )
+                if prior_lead:
+                    inherited = session.scalars(select(ContactPoint).where(
+                        ContactPoint.lead_id == prior_lead.id
+                    )).all()
+                    for point in inherited:
+                        session.add(ContactPoint(
+                            lead_id=lead.id, kind=point.kind, value=point.value,
+                            normalized_value=point.normalized_value,
+                            label=point.label, source_name=point.source_name,
+                            confidence=point.confidence, status=point.status,
+                            is_primary=point.is_primary, notes=(
+                                f'Inherited from prior campaign lead {prior_lead.id}'
+                            ), created_at=now, updated_at=now,
+                        ))
+                    if not lead.phone:
+                        lead.phone = prior_lead.phone
+                    if not lead.email:
+                        lead.email = prior_lead.email
                 if lead.phone:
-                    session.add(
+                    existing_phone = session.scalar(select(ContactPoint.id).where(
+                        ContactPoint.lead_id == lead.id,
+                        ContactPoint.kind == 'phone',
+                        ContactPoint.normalized_value == normalize_contact_value('phone', lead.phone),
+                    ))
+                    if not existing_phone:
+                        session.add(
                         ContactPoint(
                             lead_id=lead.id,
                             kind='phone',
@@ -1005,8 +1078,7 @@ class CRMRepository:
                             notes='Imported with the approved source record',
                             created_at=now,
                             updated_at=now,
-                        )
-                    )
+                        ))
                 session.add(
                     LeadActivity(
                         lead_id=lead.id,
@@ -1028,8 +1100,13 @@ class CRMRepository:
         follow_up='',
         page=1,
         per_page=50,
+        campaign_id=None,
     ):
         conditions = []
+        if campaign_id:
+            conditions.append(
+                Lead.source_job_id == self._campaign_job_id(campaign_id)
+            )
         if search:
             term = f'%{search}%'
             conditions.append(
@@ -1171,6 +1248,53 @@ class CRMRepository:
             'pages': max((total + per_page - 1) // per_page, 1),
             'research_summary': research_summary,
         }
+
+    def _campaign_job_id(self, campaign_id):
+        try:
+            campaign_id = int(campaign_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError('Invalid campaign') from error
+        with self.Session() as session:
+            job_id = session.scalar(
+                select(Campaign.source_job_id).where(Campaign.id == campaign_id)
+            )
+        if not job_id:
+            raise ValueError('Campaign not found')
+        return job_id
+
+    def list_campaigns(self, include_archived=True):
+        with self.Session() as session:
+            conditions = [] if include_archived else [Campaign.status != 'archived']
+            campaigns = session.scalars(
+                select(Campaign).where(*conditions).order_by(Campaign.created_at.desc())
+            ).all()
+            counts = dict(session.execute(
+                select(Lead.source_job_id, func.count(Lead.id)).group_by(Lead.source_job_id)
+            ).all())
+        return [
+            {**_as_dict(item), 'lead_count': int(counts.get(item.source_job_id, 0))}
+            for item in campaigns
+        ]
+
+    def update_campaign(self, campaign_id, changes):
+        now = utc_now()
+        with self.Session.begin() as session:
+            campaign = session.get(Campaign, int(campaign_id))
+            if not campaign:
+                return None
+            if 'name' in changes:
+                name = str(changes['name'] or '').strip()
+                if not name:
+                    raise ValueError('Campaign name is required')
+                campaign.name = name
+            if 'status' in changes:
+                if changes['status'] not in CAMPAIGN_STATUSES:
+                    raise ValueError('Invalid campaign status')
+                campaign.status = changes['status']
+            campaign.updated_at = now
+        return next(
+            item for item in self.list_campaigns() if item['id'] == int(campaign_id)
+        )
 
     def get_lead(self, lead_id):
         with self.Session() as session:
@@ -1835,24 +1959,31 @@ class CRMRepository:
             lead.updated_at = now
         return self.get_lead(lead_id)
 
-    def dashboard_metrics(self):
+    def dashboard_metrics(self, campaign_id=None):
         today = date.today().isoformat()
+        campaign_conditions = []
+        if campaign_id:
+            campaign_conditions.append(
+                Lead.source_job_id == self._campaign_job_id(campaign_id)
+            )
         with self.Session() as session:
-            total = session.scalar(select(func.count()).select_from(Lead)) or 0
+            total = session.scalar(
+                select(func.count()).select_from(Lead).where(*campaign_conditions)
+            ) or 0
             deceased = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(Lead.deceased_flag.is_(True))
+                .where(*campaign_conditions, Lead.deceased_flag.is_(True))
             ) or 0
             research = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(research_queue_condition())
+                .where(*campaign_conditions, research_queue_condition())
             ) or 0
             contacts = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(
+                .where(*campaign_conditions,
                     or_(
                         func.coalesce(func.trim(Lead.phone), '') != '',
                         func.coalesce(func.trim(Lead.email), '') != '',
@@ -1862,7 +1993,7 @@ class CRMRepository:
             overdue = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(
+                .where(*campaign_conditions,
                     Lead.next_follow_up.is_not(None),
                     Lead.next_follow_up < today,
                     Lead.status.not_in(('closed', 'disqualified')),
@@ -1871,7 +2002,7 @@ class CRMRepository:
             due_today = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(
+                .where(*campaign_conditions,
                     Lead.next_follow_up.is_not(None),
                     Lead.next_follow_up <= today,
                     Lead.status.not_in(('closed', 'disqualified')),
@@ -1886,7 +2017,7 @@ class CRMRepository:
             'follow_ups_due': due_today,
         }
 
-    def pipeline_board(self, cards_per_stage=50):
+    def pipeline_board(self, cards_per_stage=50, campaign_id=None):
         cards_per_stage = min(max(int(cards_per_stage), 1), 100)
         priority_order = case(
             (Lead.priority == 'urgent', 0),
@@ -1895,17 +2026,22 @@ class CRMRepository:
             else_=3,
         )
         stages = []
+        campaign_conditions = []
+        if campaign_id:
+            campaign_conditions.append(
+                Lead.source_job_id == self._campaign_job_id(campaign_id)
+            )
         with self.Session() as session:
             for status in PIPELINE_STAGES:
                 count, debt = session.execute(
                     select(
                         func.count(Lead.id),
                         func.coalesce(func.sum(Lead.total_due), 0),
-                    ).where(Lead.status == status)
+                    ).where(*campaign_conditions, Lead.status == status)
                 ).one()
                 leads = session.scalars(
                     select(Lead)
-                    .where(Lead.status == status)
+                    .where(*campaign_conditions, Lead.status == status)
                     .order_by(
                         priority_order,
                         Lead.next_follow_up.asc(),
@@ -1925,7 +2061,7 @@ class CRMRepository:
             disqualified = session.scalar(
                 select(func.count())
                 .select_from(Lead)
-                .where(Lead.status == 'disqualified')
+                .where(*campaign_conditions, Lead.status == 'disqualified')
             ) or 0
         return {
             'stages': stages,
@@ -2208,10 +2344,16 @@ class CRMRepository:
             ],
         }
 
-    def enrichment_summary(self):
+    def enrichment_summary(self, campaign_id=None):
+        campaign_conditions = []
+        if campaign_id:
+            campaign_conditions.append(
+                Lead.source_job_id == self._campaign_job_id(campaign_id)
+            )
         with self.Session() as session:
             missing = session.scalar(
                 select(func.count()).select_from(Lead).where(
+                    *campaign_conditions,
                     Lead.status.not_in(('closed', 'disqualified')),
                     or_(Lead.phone.is_(None), func.trim(Lead.phone) == ''),
                     or_(Lead.email.is_(None), func.trim(Lead.email) == ''),
@@ -2243,10 +2385,11 @@ class CRMRepository:
         cost_per_record,
         budget_cap,
         max_records=5000,
+        campaign_id=None,
+        selection_mode='high_priority',
+        lead_ids=None,
     ):
-        provider = str(provider or '').strip()
-        if not provider:
-            raise ValueError('Provider or research source is required')
+        provider = str(provider or 'Tracerfy').strip()
         try:
             cost = round(float(cost_per_record), 4)
             budget = round(float(budget_cap), 2)
@@ -2260,6 +2403,17 @@ class CRMRepository:
         affordable = min(limit, int(budget // cost))
         if affordable < 1:
             raise ValueError('Budget cap does not cover one record')
+        if selection_mode not in SKIP_TRACE_SELECTIONS:
+            raise ValueError('Invalid skip trace selection')
+        if not campaign_id:
+            raise ValueError('Select a campaign before skip tracing')
+        source_job_id = self._campaign_job_id(campaign_id)
+        try:
+            requested_ids = {int(item) for item in (lead_ids or [])}
+        except (TypeError, ValueError) as error:
+            raise ValueError('Invalid manual lead selection') from error
+        if selection_mode == 'manual' and not requested_ids:
+            raise ValueError('Select at least one lead')
 
         priority_order = case(
             (Lead.priority == 'urgent', 0),
@@ -2269,8 +2423,18 @@ class CRMRepository:
         )
         now = utc_now()
         with self.Session.begin() as session:
+            selection_conditions = [Lead.source_job_id == source_job_id]
+            if selection_mode == 'high_priority':
+                selection_conditions.append(Lead.priority.in_(('urgent', 'high')))
+            elif selection_mode == 'potentially_deceased':
+                selection_conditions.append(or_(
+                    Lead.deceased_flag.is_(True), Lead.status == 'research_needed'
+                ))
+            else:
+                selection_conditions.append(Lead.id.in_(requested_ids))
             leads = session.scalars(
                 select(Lead).where(
+                    *selection_conditions,
                     Lead.status.not_in(('closed', 'disqualified')),
                     or_(Lead.phone.is_(None), func.trim(Lead.phone) == ''),
                     or_(Lead.email.is_(None), func.trim(Lead.email) == ''),
@@ -2287,13 +2451,15 @@ class CRMRepository:
             batch = EnrichmentBatch(
                 batch_id=batch_id,
                 provider=provider,
-                status='ready_for_export',
+                status='pending',
                 lead_ids_json=json.dumps([lead.id for lead in leads]),
                 cost_per_record=cost,
                 budget_cap=budget,
                 estimated_cost=round(len(leads) * cost, 2),
                 created_at=now,
                 updated_at=now,
+                campaign_id=int(campaign_id),
+                selection_mode=selection_mode,
             )
             session.add(batch)
         return self.get_enrichment_batch(batch_id)
@@ -2329,12 +2495,147 @@ class CRMRepository:
                         'Property Address': by_id[lead_id].property_address,
                         'Property City': by_id[lead_id].property_city,
                         'Mailing Address': by_id[lead_id].mailing_address,
+                        'ZIP': by_id[lead_id].zip_code,
                         'Phone': '',
                         'Email': '',
                     }
                     for lead_id in lead_ids if lead_id in by_id
                 ]
             return result
+
+    def execute_skip_trace_batch(self, batch_id, provider):
+        batch = self.get_enrichment_batch(batch_id, include_leads=True)
+        if not batch:
+            return None
+        if batch['status'] not in ('pending', 'failed'):
+            raise ValueError('Skip trace batch has already been executed')
+        results, failures, actual_cost = [], [], 0.0
+
+        def lookup(lead):
+            return lead, provider.lookup({
+                    'property_address': lead['Property Address'],
+                    'property_city': lead['Property City'],
+                    'property_state': 'OK',
+                    'zip_code': lead.get('ZIP'),
+                })
+
+        # Small selective batches stay within normal web request time without
+        # turning this into an unsafe full-list background job.
+        with ThreadPoolExecutor(max_workers=min(8, len(batch['leads']))) as pool:
+            futures = {pool.submit(lookup, lead): lead for lead in batch['leads']}
+            for future in as_completed(futures):
+                lead = futures[future]
+                try:
+                    _, result = future.result()
+                except Exception as error:
+                    failures.append({'lead_id': lead['Lead ID'], 'error': str(error)})
+                    continue
+                if result.hit:
+                    actual_cost += provider.cost_per_hit
+                results.append({
+                    'Lead ID': lead['Lead ID'], 'phones': list(result.phones),
+                    'emails': list(result.emails), 'deceased': result.deceased,
+                })
+        self.apply_skip_trace_results(batch_id, results)
+        with self.Session.begin() as session:
+            item = session.scalar(select(EnrichmentBatch).where(
+                EnrichmentBatch.batch_id == batch_id
+            ))
+            item.actual_cost = round(actual_cost, 2)
+            item.error_json = json.dumps(failures) if failures else None
+            if failures:
+                item.status = 'completed_with_errors' if results else 'failed'
+            item.updated_at = utc_now()
+        return self.get_enrichment_batch(batch_id)
+
+    def apply_skip_trace_results(self, batch_id, rows):
+        now = utc_now()
+        with self.Session.begin() as session:
+            batch = session.scalar(select(EnrichmentBatch).where(
+                EnrichmentBatch.batch_id == batch_id
+            ))
+            if not batch:
+                return None
+            allowed_ids = set(json.loads(batch.lead_ids_json))
+            summary = {
+                'rows_received': len(rows), 'leads_updated': 0,
+                'conflicts': 0, 'no_data': 0, 'invalid_rows': 0,
+                'dnc_phones': 0,
+            }
+            for row in rows:
+                try:
+                    lead_id = int(row.get('Lead ID'))
+                except (TypeError, ValueError):
+                    summary['invalid_rows'] += 1
+                    continue
+                if lead_id not in allowed_ids:
+                    summary['invalid_rows'] += 1
+                    continue
+                lead = session.get(Lead, lead_id)
+                points = []
+                for raw in row.get('phones') or []:
+                    value = str(raw.get('number') or raw.get('phone') or '').strip()
+                    if value:
+                        points.append(('phone', value, raw))
+                for raw in row.get('emails') or []:
+                    data = raw if isinstance(raw, dict) else {}
+                    value = str(data.get('email') or data.get('address') or raw).strip()
+                    if value:
+                        points.append(('email', value, data))
+                if not points:
+                    summary['no_data'] += 1
+                    continue
+                for kind, value, raw in points:
+                    normalized = normalize_contact_value(kind, value)
+                    if not normalized:
+                        continue
+                    blocked = kind == 'phone' and bool(
+                        raw.get('dnc') or raw.get('tcpa') or raw.get('litigator')
+                    )
+                    status = 'do_not_contact' if blocked else 'active'
+                    if blocked:
+                        summary['dnc_phones'] += 1
+                    existing = session.scalar(select(ContactPoint).where(
+                        ContactPoint.lead_id == lead.id,
+                        ContactPoint.kind == kind,
+                        ContactPoint.normalized_value == normalized,
+                    ))
+                    if existing:
+                        if blocked:
+                            existing.status = 'do_not_contact'
+                        existing.updated_at = now
+                        continue
+                    legacy = lead.phone if kind == 'phone' else lead.email
+                    primary = not legacy and not blocked
+                    session.add(ContactPoint(
+                        lead_id=lead.id, kind=kind, value=value,
+                        normalized_value=normalized,
+                        label=str(raw.get('type') or 'Skip trace result'),
+                        source_name=batch.provider, confidence='probable',
+                        status=status, is_primary=primary,
+                        notes='Retrieved through selective API skip trace',
+                        created_at=now, updated_at=now,
+                    ))
+                    if primary:
+                        if kind == 'phone':
+                            lead.phone = value
+                        else:
+                            lead.email = value
+                if row.get('deceased') is True:
+                    lead.deceased_flag = True
+                    if lead.status == 'new':
+                        lead.status = 'research_needed'
+                lead.updated_at = now
+                summary['leads_updated'] += 1
+                session.add(LeadActivity(
+                    lead_id=lead.id, activity_type='skip_trace_completed',
+                    detail=f'Selective skip trace completed by {batch.provider}',
+                    created_at=now,
+                ))
+            batch.status = 'completed'
+            batch.result_summary_json = json.dumps(summary)
+            batch.updated_at = now
+        return self.get_enrichment_batch(batch_id)
 
     def apply_enrichment_results(self, batch_id, rows):
         now = utc_now()

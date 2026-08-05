@@ -953,11 +953,14 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(api['summary']['active_debt'], 14800)
 
     def test_enrichment_exchange_caps_cost_and_preserves_conflicts(self):
+        campaign_id = self.repository.list_campaigns()[0]['id']
         batch = self.repository.create_enrichment_batch(
             provider='Test pay-per-use source',
             cost_per_record=.15,
             budget_cap=10,
             max_records=100,
+            campaign_id=campaign_id,
+            selection_mode='high_priority',
         )
         lead_id = self.repository.list_leads()['items'][0]['id']
 
@@ -998,7 +1001,29 @@ class CRMTest(unittest.TestCase):
             for item in detail['contact_points']
         ))
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b'Control the cost before you enrich.', page.data)
+        self.assertIn(b'Trace only the owners worth calling.', page.data)
+
+    def test_campaigns_isolate_repeated_import_work(self):
+        second = self.dataframe.copy()
+        second.loc[:, 'Tax ID'] = ['NEW-A', 'NEW-B']
+        self.repository.import_leads(
+            second, {**self.job, 'uid': 'job-2', 'source_filename': 'next.xlsx'},
+            self.columns,
+        )
+        campaigns = self.repository.list_campaigns()
+        first = next(item for item in campaigns if item['source_job_id'] == 'job-1')
+        second_campaign = next(item for item in campaigns if item['source_job_id'] == 'job-2')
+
+        self.assertEqual(self.repository.list_leads(campaign_id=first['id'])['total'], 2)
+        self.assertEqual(self.repository.list_leads(campaign_id=second_campaign['id'])['total'], 2)
+        self.assertEqual(sum(
+            stage['count'] for stage in
+            self.repository.pipeline_board(campaign_id=first['id'])['stages']
+        ), 2)
+
+        archived = self.repository.update_campaign(first['id'], {'status': 'archived'})
+        self.assertEqual(archived['status'], 'archived')
+        self.assertEqual(len(self.repository.list_campaigns(include_archived=False)), 1)
 
     def test_contact_ledger_preserves_sources_and_controls_primary_status(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
