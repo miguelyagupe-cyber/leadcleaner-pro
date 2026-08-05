@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: leadcleaner-pro
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python migrate.py && gunicorn app:app --timeout 120 --workers 1 --max-requests 10
+    healthCheckPath: /api/readiness
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: leadcleaner-pro-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: APP_LOGIN_EMAIL
+        sync: false
+      - key: APP_LOGIN_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+databases:
+  - name: leadcleaner-pro-db
+    databaseName: leadcleaner
+    user: leadcleaner
