@@ -6,9 +6,10 @@ import io
 from datetime import date, timedelta
 
 import pandas as pd
+from sqlalchemy import inspect
 
 from app import app, get_crm
-from crm import CRMRepository
+from crm import ContactPoint, CRMRepository, Lead
 
 
 class CRMTest(unittest.TestCase):
@@ -22,6 +23,10 @@ class CRMTest(unittest.TestCase):
         )
         self.repository = CRMRepository(self.database_path)
         self.repository.initialize()
+        ContactPoint.__table__.create(
+            self.repository.engine,
+            checkfirst=True,
+        )
         self.client = app.test_client()
 
         dataframe = pd.DataFrame(
@@ -841,8 +846,263 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(detail['phone'], '9185550100')
         self.assertEqual(conflict['result_summary']['conflicts'], 1)
         self.assertEqual(detail['activity'][0]['activity_type'], 'enrichment_conflict')
+        self.assertEqual(len(detail['contact_points']), 2)
+        self.assertTrue(any(
+            item['value'] == '9185559999'
+            and not item['is_primary']
+            for item in detail['contact_points']
+        ))
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Control the cost before you enrich.', page.data)
+
+    def test_contact_ledger_preserves_sources_and_controls_primary_status(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        first = self.client.post(
+            f'/api/leads/{lead_id}/contacts',
+            json={
+                'kind': 'phone',
+                'value': '(918) 555-0101',
+                'source_name': 'Owner callback',
+                'confidence': 'verified',
+                'label': 'Mobile',
+            },
+        )
+        second = self.client.post(
+            f'/api/leads/{lead_id}/contacts',
+            json={
+                'kind': 'phone',
+                'value': '918-555-0102',
+                'source_name': 'Manual public-record research',
+                'confidence': 'probable',
+                'is_primary': True,
+            },
+        )
+        first_id = first.get_json()['contact_id']
+        invalid = self.client.patch(
+            f'/api/leads/{lead_id}/contacts/{first_id}',
+            json={'status': 'invalid'},
+        )
+        detail = self.repository.get_lead(lead_id)
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(invalid.status_code, 200)
+        self.assertEqual(detail['phone'], '918-555-0102')
+        self.assertEqual(len(detail['contact_points']), 2)
+        self.assertEqual(
+            next(item for item in detail['contact_points'] if item['id'] == first_id)['status'],
+            'invalid',
+        )
+
+    def test_contact_ledger_is_not_created_by_repository_initialization(self):
+        database_path = os.path.join(self.temp_dir.name, 'without-ledger.db')
+        repository = CRMRepository(database_path)
+
+        repository.initialize()
+
+        self.assertFalse(inspect(repository.engine).has_table('contact_points'))
+
+    def test_contact_ledger_requires_source_and_reuses_normalized_identity(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        missing_source = self.client.post(
+            f'/api/leads/{lead_id}/contacts',
+            json={'kind': 'phone', 'value': '(918) 555-0101'},
+        )
+        first = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '(918) 555-0101',
+                'source_name': 'Owner callback',
+            },
+        )
+        repeated = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '918-555-0101',
+                'source_name': 'Manual verification',
+                'confidence': 'verified',
+            },
+        )
+        detail = self.repository.get_lead(lead_id)
+        sourced = [item for item in detail['contact_points'] if item['id']]
+
+        self.assertEqual(missing_source.status_code, 400)
+        self.assertEqual(first['contact_id'], repeated['contact_id'])
+        self.assertEqual(len(sourced), 1)
+        self.assertEqual(sourced[0]['source_name'], 'Manual verification')
+        self.assertEqual(sourced[0]['confidence'], 'verified')
+
+    def test_do_not_contact_primary_promotes_best_active_alternative(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        probable = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '9185550101',
+                'source_name': 'Public record',
+                'confidence': 'probable',
+            },
+        )
+        verified = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '9185550102',
+                'source_name': 'Owner callback',
+                'confidence': 'verified',
+                'is_primary': True,
+            },
+        )
+
+        self.repository.update_contact_point(
+            lead_id,
+            verified['contact_id'],
+            {'status': 'do_not_contact'},
+        )
+        detail = self.repository.get_lead(lead_id)
+        promoted = next(
+            item for item in detail['contact_points']
+            if item['id'] == probable['contact_id']
+        )
+
+        self.assertTrue(promoted['is_primary'])
+        self.assertEqual(detail['phone'], '9185550101')
+
+    def test_non_active_match_clears_legacy_operational_contact(self):
+        lead = next(
+            item for item in self.repository.list_leads()['items']
+            if item['owner_name'] == 'TEST OWNER BETA'
+        )
+
+        result = self.repository.add_contact_point(
+            lead['id'],
+            {
+                'kind': 'phone',
+                'value': '(000) 000-0000',
+                'source_name': 'Manual DNC verification',
+                'confidence': 'verified',
+                'status': 'do_not_contact',
+            },
+        )
+        detail = result['lead']
+        recorded = next(
+            item for item in detail['contact_points']
+            if item['id'] == result['contact_id']
+        )
+
+        self.assertIsNone(detail['phone'])
+        self.assertEqual(recorded['status'], 'do_not_contact')
+        self.assertFalse(recorded['is_primary'])
+
+    def test_enrichment_accepts_new_email_while_preserving_conflicting_phone(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test mixed enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead_id, 'Phone': '9185550100'}],
+        )
+
+        result = self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{
+                'Lead ID': lead_id,
+                'Phone': '9185559999',
+                'Email': 'owner@example.test',
+            }],
+        )
+        detail = self.repository.get_lead(lead_id)
+        alternate_phone = next(
+            item for item in detail['contact_points']
+            if item['kind'] == 'phone' and item['value'] == '9185559999'
+        )
+        primary_email = next(
+            item for item in detail['contact_points']
+            if item['kind'] == 'email'
+        )
+
+        self.assertEqual(detail['phone'], '9185550100')
+        self.assertEqual(detail['email'], 'owner@example.test')
+        self.assertFalse(alternate_phone['is_primary'])
+        self.assertTrue(primary_email['is_primary'])
+        self.assertEqual(result['result_summary']['conflicts'], 1)
+        self.assertEqual(result['result_summary']['leads_updated'], 1)
+
+    def test_enrichment_matching_legacy_contact_records_operational_primary(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test confirming enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead = self.repository.list_leads()['items'][0]
+        with self.repository.Session.begin() as session:
+            session.get(Lead, lead['id']).phone = '9185550100'
+
+        self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead['id'], 'Phone': '(918) 555-0100'}],
+        )
+        detail = self.repository.get_lead(lead['id'])
+        confirmed = next(
+            item for item in detail['contact_points']
+            if item['id'] and item['kind'] == 'phone'
+        )
+
+        self.assertTrue(confirmed['is_primary'])
+
+        self.repository.update_contact_point(
+            lead['id'],
+            confirmed['id'],
+            {'status': 'do_not_contact'},
+        )
+        updated = self.repository.get_lead(lead['id'])
+
+        self.assertIsNone(updated['phone'])
+
+    def test_enrichment_does_not_reactivate_non_active_contact(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test repeat enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        recorded = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '9185550100',
+                'source_name': 'Manual verification',
+                'confidence': 'verified',
+            },
+        )
+        self.repository.update_contact_point(
+            lead_id,
+            recorded['contact_id'],
+            {'status': 'do_not_contact'},
+        )
+
+        result = self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead_id, 'Phone': '(918) 555-0100'}],
+        )
+        detail = self.repository.get_lead(lead_id)
+        contact = next(
+            item for item in detail['contact_points']
+            if item['id'] == recorded['contact_id']
+        )
+
+        self.assertIsNone(detail['phone'])
+        self.assertEqual(contact['status'], 'do_not_contact')
+        self.assertFalse(contact['is_primary'])
+        self.assertEqual(result['result_summary']['leads_updated'], 0)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
