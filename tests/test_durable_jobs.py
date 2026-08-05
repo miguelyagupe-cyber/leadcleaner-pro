@@ -2,8 +2,10 @@ import os
 import io
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 import pandas as pd
+import requests
 
 from app import app, load_job_meta, materialize_artifact, persist_artifact, save_job_meta
 from crm import CRMRepository
@@ -23,6 +25,9 @@ class DurableProcessingJobsTest(unittest.TestCase):
             CRM_DATABASE=self.database_path,
             OUTPUT_FOLDER=self.output_dir,
             UPLOAD_FOLDER=self.upload_dir,
+            GOOGLE_DRIVE_CLIENT_ID='',
+            GOOGLE_DRIVE_API_KEY='',
+            GOOGLE_DRIVE_HTTP=requests,
         )
         self.repository = CRMRepository(self.database_path)
         self.repository.initialize()
@@ -186,6 +191,100 @@ class DurableProcessingJobsTest(unittest.TestCase):
         self.assertEqual(payload['needs_attention'], 0)
         self.assertEqual(payload['jobs'][0]['id'], job_id)
         self.assertTrue(payload['jobs'][0]['download_available'])
+
+    def test_import_page_enables_drive_picker_only_when_configured(self):
+        manual_page = self.client.get('/imports')
+        self.assertNotIn(b'Choose from Google Drive', manual_page.data)
+
+        app.config.update(
+            GOOGLE_DRIVE_CLIENT_ID='123-example.apps.googleusercontent.com',
+            GOOGLE_DRIVE_API_KEY='fictional-browser-key',
+        )
+        drive_page = self.client.get('/imports')
+
+        self.assertIn(b'Choose from Google Drive', drive_page.data)
+        self.assertIn(b'authorization tokens are never stored', drive_page.data)
+
+    def test_google_drive_sheet_enters_the_normal_durable_workflow(self):
+        source = pd.DataFrame([{
+            'Tax ID': 100,
+            'PID': '12345-67-89-00010',
+            'Owner Name': 'DOE, JANE',
+            'TotalDue': 6000,
+            'Address': 'PO BOX 12',
+            'OWNR_ADDR 6': 'DALLAS',
+            'OWNR_ADDR ST': 'TX',
+            'ST_NO': 10,
+            'ST_NAME': 'MAIN',
+            'ST_STREET_TYPE': 'ST',
+            'ST_CITY': 'CITY OF TULSA',
+            'Legal Description': 'LT 1 BLK 1 | SAMPLE',
+        }])
+        workbook = io.BytesIO()
+        with pd.ExcelWriter(workbook, engine='openpyxl') as writer:
+            source.to_excel(writer, index=False)
+
+        metadata = Mock()
+        metadata.json.return_value = {
+            'id': 'drive-file-12345',
+            'name': 'Tulsa County List',
+            'mimeType': 'application/vnd.google-apps.spreadsheet',
+            'modifiedTime': '2026-08-05T10:00:00Z',
+        }
+        metadata.raise_for_status.return_value = None
+        download = Mock(content=workbook.getvalue())
+        download.raise_for_status.return_value = None
+        http = Mock()
+        http.get.side_effect = [metadata, download]
+        app.config['GOOGLE_DRIVE_HTTP'] = http
+
+        response = self.client.post(
+            '/api/imports/google-drive',
+            json={
+                'file_id': 'drive-file-12345',
+                'access_token': 'fictional-ephemeral-token',
+                'tax_year': 2023,
+            },
+        )
+        payload = response.get_json()
+        job = load_job_meta(payload['job_id'])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['success'])
+        self.assertEqual(job['source_filename'], 'Tulsa County List.xlsx')
+        self.assertEqual(job['source_provenance']['provider'], 'google_drive')
+        self.assertEqual(job['source_provenance']['file_id'], 'drive-file-12345')
+        self.assertNotIn('access_token', job['source_provenance'])
+        self.assertEqual(http.get.call_count, 2)
+
+    def test_google_drive_import_rejects_missing_auth_and_wrong_file_type(self):
+        missing_auth = self.client.post(
+            '/api/imports/google-drive',
+            json={'file_id': 'drive-file-12345', 'tax_year': 2023},
+        )
+        metadata = Mock()
+        metadata.json.return_value = {
+            'id': 'drive-file-12345',
+            'name': 'notes.pdf',
+            'mimeType': 'application/pdf',
+            'size': '100',
+        }
+        metadata.raise_for_status.return_value = None
+        http = Mock()
+        http.get.return_value = metadata
+        app.config['GOOGLE_DRIVE_HTTP'] = http
+        wrong_type = self.client.post(
+            '/api/imports/google-drive',
+            json={
+                'file_id': 'drive-file-12345',
+                'access_token': 'fictional-ephemeral-token',
+                'tax_year': 2023,
+            },
+        )
+
+        self.assertEqual(missing_auth.status_code, 400)
+        self.assertEqual(wrong_type.status_code, 400)
+        self.assertIn('XLSX', wrong_type.get_json()['error'])
 
     def test_processing_export_includes_auditable_run_summary(self):
         source = pd.DataFrame([{

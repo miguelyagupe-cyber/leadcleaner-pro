@@ -63,6 +63,9 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
 app.config['ASSESSOR_BATCH_LIMIT'] = 25
 app.config['ASSESSOR_CLIENT_FACTORY'] = TulsaAssessorClient
+app.config['GOOGLE_DRIVE_CLIENT_ID'] = os.environ.get('GOOGLE_DRIVE_CLIENT_ID', '')
+app.config['GOOGLE_DRIVE_API_KEY'] = os.environ.get('GOOGLE_DRIVE_API_KEY', '')
+app.config['GOOGLE_DRIVE_HTTP'] = requests
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -126,11 +129,13 @@ def add_security_headers(response):
     )
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://apis.google.com "
+        "https://accounts.google.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; "
         "img-src 'self' data:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://accounts.google.com; "
+        "frame-src https://accounts.google.com https://docs.google.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -1053,7 +1058,11 @@ def enrichment_page():
 
 @app.route('/imports')
 def imports_page():
-    return render_template('imports.html')
+    return render_template(
+        'imports.html',
+        google_drive_client_id=app.config.get('GOOGLE_DRIVE_CLIENT_ID', ''),
+        google_drive_api_key=app.config.get('GOOGLE_DRIVE_API_KEY', ''),
+    )
 
 
 @app.route('/alerts')
@@ -1436,34 +1445,39 @@ def api_retract_lead_evidence(lead_id, evidence_id):
     return jsonify({'success': True, 'lead': lead})
 
 
-@app.route('/process', methods=['POST'])
-def process():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-
-    tax_year = request.form.get('tax_year', '2023')
+def _tax_year(value):
     try:
-        tax_year = int(tax_year)
-    except ValueError:
-        return jsonify({'error': 'Invalid tax year'}), 400
+        year = int(value)
+    except (TypeError, ValueError):
+        raise ValueError('Invalid tax year')
+    if year < 2000 or year > datetime.now().year + 1:
+        raise ValueError('Invalid tax year')
+    return year
 
-    ext = os.path.splitext(file.filename)[1].lower()
+
+def _run_qualification(source_filename, source_bytes, tax_year, provenance=None):
+    source_filename = os.path.basename(source_filename or '')
+    if not source_filename:
+        raise ValueError('Source filename is required')
+
+    ext = os.path.splitext(source_filename)[1].lower()
     if ext not in ['.xlsx', '.xls', '.csv']:
-        return jsonify({'error': 'File must be .xlsx, .xls or .csv'}), 400
+        raise ValueError('File must be .xlsx, .xls or .csv')
+    if not source_bytes:
+        raise ValueError('The selected file is empty')
+    if len(source_bytes) > app.config['MAX_CONTENT_LENGTH']:
+        raise ValueError('File exceeds the 50 MB limit')
 
     uid = str(uuid.uuid4())[:8]
     upload_path = os.path.join(app.config['UPLOAD_FOLDER'], f'{uid}_input{ext}')
-    file.save(upload_path)
-    with open(upload_path, 'rb') as source_file:
-        source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
+    with open(upload_path, 'wb') as source_file:
+        source_file.write(source_bytes)
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
     job_meta = {
         'uid': uid,
-        'source_filename': file.filename,
+        'source_filename': source_filename,
         'source_sha256': source_sha256,
+        'source_provenance': provenance or {'provider': 'manual_upload'},
         'qualification_engine': QUALIFICATION_ENGINE_VERSION,
         'tax_year': tax_year,
         'stats': {},
@@ -1481,7 +1495,7 @@ def process():
         job_meta['status'] = 'failed'
         job_meta['error'] = f'Could not read file: {str(e)}'
         save_job_meta(job_meta)
-        return jsonify({'error': f'Could not read file: {str(e)}'}), 400
+        raise ValueError(f'Could not read file: {str(e)}')
 
     try:
         qualification = qualify_leads(df, tax_year)
@@ -1491,7 +1505,7 @@ def process():
         job_meta['error'] = f'Error during cleaning: {str(e)}'
         job_meta['columns_found'] = list(df.columns)
         save_job_meta(job_meta)
-        return jsonify({'error': f'Error during cleaning: {str(e)}', 'columns_found': list(df.columns)}), 500
+        raise RuntimeError(f'Error during cleaning: {str(e)}')
 
     date_str = datetime.now().strftime('%Y%m%d')
     output_filename = f'Clean_Leads_{tax_year}_{date_str}_{uid}.xlsx'
@@ -1500,7 +1514,7 @@ def process():
     save_excel_formatted(
         {
             'Run Summary': qualification_run_summary(
-                file.filename,
+                source_filename,
                 source_sha256,
                 tax_year,
                 stats,
@@ -1525,7 +1539,7 @@ def process():
     # action will import approved leads into the production CRM.
     imported_to_crm = 0
 
-    return jsonify({
+    return {
         'success': True,
         'stats': stats,
         'crm_imported': imported_to_crm,
@@ -1533,7 +1547,100 @@ def process():
         'download_file': output_filename,
         'job_id': uid,
         'skip_trace_available': SKIP_TRACE_PROVIDER != 'none'
-    })
+    }
+
+
+@app.route('/process', methods=['POST'])
+def process():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'error': 'No file selected'}), 400
+    try:
+        result = _run_qualification(
+            file.filename,
+            file.read(),
+            _tax_year(request.form.get('tax_year', '2023')),
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except RuntimeError as error:
+        return jsonify({'error': str(error)}), 500
+    return jsonify(result)
+
+
+@app.route('/api/imports/google-drive', methods=['POST'])
+def api_google_drive_import():
+    payload = request.get_json(silent=True) or {}
+    file_id = str(payload.get('file_id') or '').strip()
+    access_token = str(payload.get('access_token') or '').strip()
+    if not file_id or not re.fullmatch(r'[A-Za-z0-9_-]{10,}', file_id):
+        return jsonify({'error': 'A valid Google Drive file is required'}), 400
+    if not access_token:
+        return jsonify({'error': 'Google Drive authorization is required'}), 400
+
+    http = app.config['GOOGLE_DRIVE_HTTP']
+    headers = {'Authorization': f'Bearer {access_token}'}
+    try:
+        metadata_response = http.get(
+            f'https://www.googleapis.com/drive/v3/files/{file_id}',
+            params={'fields': 'id,name,mimeType,size,modifiedTime'},
+            headers=headers,
+            timeout=20,
+        )
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+        filename = os.path.basename(str(metadata.get('name') or ''))
+        mime_type = metadata.get('mimeType')
+        if mime_type == 'application/vnd.google-apps.spreadsheet':
+            filename = f"{os.path.splitext(filename)[0]}.xlsx"
+            download_url = (
+                f'https://www.googleapis.com/drive/v3/files/{file_id}/export'
+            )
+            params = {
+                'mimeType': (
+                    'application/vnd.openxmlformats-officedocument.'
+                    'spreadsheetml.sheet'
+                )
+            }
+        else:
+            download_url = f'https://www.googleapis.com/drive/v3/files/{file_id}'
+            params = {'alt': 'media'}
+        if os.path.splitext(filename)[1].lower() not in ('.xlsx', '.xls', '.csv'):
+            return jsonify({'error': 'Select an XLSX, XLS, CSV, or Google Sheet file'}), 400
+        try:
+            declared_size = int(metadata.get('size') or 0)
+        except (TypeError, ValueError):
+            declared_size = 0
+        if declared_size > app.config['MAX_CONTENT_LENGTH']:
+            return jsonify({'error': 'File exceeds the 50 MB limit'}), 400
+        download = http.get(
+            download_url,
+            params=params,
+            headers=headers,
+            timeout=60,
+        )
+        download.raise_for_status()
+        source_bytes = download.content
+    except requests.RequestException:
+        return jsonify({'error': 'Google Drive could not provide the selected file'}), 502
+    try:
+        result = _run_qualification(
+            filename,
+            source_bytes,
+            _tax_year(payload.get('tax_year', 2023)),
+            {
+                'provider': 'google_drive',
+                'file_id': file_id,
+                'modified_time': metadata.get('modifiedTime'),
+            },
+        )
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except RuntimeError as error:
+        return jsonify({'error': str(error)}), 500
+    return jsonify(result)
 
 
 @app.route('/api/jobs/<job_id>')

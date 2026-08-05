@@ -215,9 +215,14 @@ Assessor checks, downloadable artifact, and resume action.
 
 Jobs and artifacts remain backed by PostgreSQL, so a Render restart does not
 erase processing state. A resume link reopens the dashboard workflow at the
-saved stage. Google Drive is deliberately labelled as not connected: the
-current release uses explicit manual uploads and does not imply background
-access to Daryl's files.
+saved stage. Imports can come from a manual upload or the Google Drive file
+picker. Drive authorization is read-only and ephemeral: the selected file is
+copied into the durable processing ledger, while OAuth tokens are never stored.
+
+Enable the optional Drive picker with `GOOGLE_DRIVE_CLIENT_ID` and
+`GOOGLE_DRIVE_API_KEY`. The Google Cloud project must enable the Google Picker
+and Drive APIs and authorize the production origin. If those variables are not
+set, manual upload remains fully operational.
 
 ## Daily execution system
 
