@@ -970,6 +970,70 @@ class CRMTest(unittest.TestCase):
         self.assertTrue(promoted['is_primary'])
         self.assertEqual(detail['phone'], '9185550101')
 
+    def test_non_active_match_clears_legacy_operational_contact(self):
+        lead = next(
+            item for item in self.repository.list_leads()['items']
+            if item['owner_name'] == 'TEST OWNER BETA'
+        )
+
+        result = self.repository.add_contact_point(
+            lead['id'],
+            {
+                'kind': 'phone',
+                'value': '(000) 000-0000',
+                'source_name': 'Manual DNC verification',
+                'confidence': 'verified',
+                'status': 'do_not_contact',
+            },
+        )
+        detail = result['lead']
+        recorded = next(
+            item for item in detail['contact_points']
+            if item['id'] == result['contact_id']
+        )
+
+        self.assertIsNone(detail['phone'])
+        self.assertEqual(recorded['status'], 'do_not_contact')
+        self.assertFalse(recorded['is_primary'])
+
+    def test_enrichment_accepts_new_email_while_preserving_conflicting_phone(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test mixed enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead_id, 'Phone': '9185550100'}],
+        )
+
+        result = self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{
+                'Lead ID': lead_id,
+                'Phone': '9185559999',
+                'Email': 'owner@example.test',
+            }],
+        )
+        detail = self.repository.get_lead(lead_id)
+        alternate_phone = next(
+            item for item in detail['contact_points']
+            if item['kind'] == 'phone' and item['value'] == '9185559999'
+        )
+        primary_email = next(
+            item for item in detail['contact_points']
+            if item['kind'] == 'email'
+        )
+
+        self.assertEqual(detail['phone'], '9185550100')
+        self.assertEqual(detail['email'], 'owner@example.test')
+        self.assertFalse(alternate_phone['is_primary'])
+        self.assertTrue(primary_email['is_primary'])
+        self.assertEqual(result['result_summary']['conflicts'], 1)
+        self.assertEqual(result['result_summary']['leads_updated'], 1)
+
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
         added = self.repository.add_evidence(
