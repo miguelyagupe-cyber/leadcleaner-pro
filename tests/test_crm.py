@@ -975,6 +975,35 @@ class CRMTest(unittest.TestCase):
         self.assertIn(b'Contact ledger', page.data)
         self.assertIn(b'Do not contact', page.data)
 
+    def test_follow_up_exports_to_google_calendar_and_ics(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        follow_up = (date.today() + timedelta(days=3)).isoformat()
+        self.repository.update_lead(lead_id, {'next_follow_up': follow_up})
+
+        calendar_file = self.client.get(f'/api/leads/{lead_id}/calendar')
+        google = self.client.get(
+            f'/api/leads/{lead_id}/calendar?provider=google'
+        )
+
+        self.assertEqual(calendar_file.status_code, 200)
+        self.assertEqual(calendar_file.mimetype, 'text/calendar')
+        self.assertIn(b'BEGIN:VCALENDAR', calendar_file.data)
+        self.assertIn(follow_up.replace('-', '').encode(), calendar_file.data)
+        self.assertIn(b'Follow up', calendar_file.data)
+        self.assertEqual(google.status_code, 302)
+        self.assertTrue(
+            google.headers['Location'].startswith(
+                'https://calendar.google.com/calendar/render?'
+            )
+        )
+
+    def test_calendar_export_requires_a_follow_up(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        response = self.client.get(f'/api/leads/{lead_id}/calendar')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Set a follow-up date', response.get_json()['error'])
+
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
         added = self.repository.add_evidence(
