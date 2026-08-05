@@ -49,6 +49,7 @@ from assessor import (
 )
 from calendar_export import event_ics, follow_up_event, google_calendar_url
 from alert_email import send_alert_digest
+from alert_sms import send_alert_sms
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
@@ -76,6 +77,12 @@ app.config['SMTP_PORT'] = int(os.environ.get('SMTP_PORT', '587'))
 app.config['SMTP_USERNAME'] = os.environ.get('SMTP_USERNAME', '')
 app.config['SMTP_PASSWORD'] = os.environ.get('SMTP_PASSWORD', '')
 app.config['SMTP_STARTTLS'] = os.environ.get('SMTP_STARTTLS', 'true').lower() == 'true'
+app.config['ALERT_SMS_ENABLED'] = os.environ.get('ALERT_SMS_ENABLED', 'false').lower() == 'true'
+app.config['ALERT_SMS_TO'] = os.environ.get('ALERT_SMS_TO', '')
+app.config['ALERT_SMS_FROM'] = os.environ.get('ALERT_SMS_FROM', '')
+app.config['TWILIO_ACCOUNT_SID'] = os.environ.get('TWILIO_ACCOUNT_SID', '')
+app.config['TWILIO_AUTH_TOKEN'] = os.environ.get('TWILIO_AUTH_TOKEN', '')
+app.config['ALERT_SMS_HTTP'] = requests
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -112,7 +119,10 @@ def inject_security_context():
 def protect_private_workspace():
     if app.config.get('TESTING') and not app.config.get('TEST_AUTH_ENABLED'):
         return None
-    if request.endpoint in ('login', 'api_health', 'api_deliver_alert_emails') or request.endpoint == 'static':
+    if request.endpoint in (
+        'login', 'api_health', 'api_deliver_alert_emails',
+        'api_deliver_alert_sms',
+    ) or request.endpoint == 'static':
         return None
     if not session.get('authenticated'):
         if request.path.startswith('/api/'):
@@ -1259,6 +1269,27 @@ def api_deliver_alert_emails():
         app.logger.exception('Operational alert email delivery failed')
         return jsonify({'error': 'Email provider could not deliver alerts'}), 502
     repository.mark_alerts_emailed([item['id'] for item in alerts])
+    return jsonify({'success': True, 'delivered': delivered})
+
+
+@app.route('/api/alerts/deliver-sms', methods=['POST'])
+def api_deliver_alert_sms():
+    configured_token = app.config.get('ALERT_DELIVERY_TOKEN', '')
+    supplied_token = request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
+    if not configured_token or not hmac.compare_digest(supplied_token, configured_token):
+        return jsonify({'error': 'Alert delivery authorization failed'}), 401
+    repository = get_crm()
+    alerts = repository.pending_sms_alerts()
+    if not alerts:
+        return jsonify({'success': True, 'delivered': 0})
+    try:
+        delivered = send_alert_sms(app.config, alerts)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 503
+    except Exception:
+        app.logger.exception('Operational alert SMS delivery failed')
+        return jsonify({'error': 'SMS provider could not deliver alerts'}), 502
+    repository.mark_alerts_sms_sent([item['id'] for item in alerts])
     return jsonify({'success': True, 'delivered': delivered})
 
 

@@ -579,6 +579,7 @@ class OperationalAlert(Base):
     href: Mapped[str] = mapped_column(Text, nullable=False)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sms_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -2742,4 +2743,35 @@ class CRMRepository:
             ).all()
             for item in items:
                 item.emailed_at = now
+        return len(items)
+
+    def pending_sms_alerts(self, limit=20):
+        self.sync_operational_alerts()
+        with self.Session() as session:
+            items = session.scalars(
+                select(OperationalAlert)
+                .where(
+                    OperationalAlert.read_at.is_(None),
+                    OperationalAlert.sms_sent_at.is_(None),
+                    OperationalAlert.severity == 'urgent',
+                )
+                .order_by(OperationalAlert.created_at.asc())
+                .limit(min(max(int(limit), 1), 50))
+            ).all()
+            return [_as_dict(item) for item in items]
+
+    def mark_alerts_sms_sent(self, alert_ids):
+        alert_ids = sorted({int(item) for item in alert_ids})
+        if not alert_ids:
+            return 0
+        now = utc_now()
+        with self.Session.begin() as session:
+            items = session.scalars(
+                select(OperationalAlert).where(
+                    OperationalAlert.id.in_(alert_ids),
+                    OperationalAlert.sms_sent_at.is_(None),
+                )
+            ).all()
+            for item in items:
+                item.sms_sent_at = now
         return len(items)
