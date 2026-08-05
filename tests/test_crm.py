@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy import inspect
 
 from app import app, get_crm
-from crm import ContactPoint, CRMRepository
+from crm import ContactPoint, CRMRepository, Lead
 
 
 class CRMTest(unittest.TestCase):
@@ -1033,6 +1033,38 @@ class CRMTest(unittest.TestCase):
         self.assertTrue(primary_email['is_primary'])
         self.assertEqual(result['result_summary']['conflicts'], 1)
         self.assertEqual(result['result_summary']['leads_updated'], 1)
+
+    def test_enrichment_matching_legacy_contact_records_operational_primary(self):
+        batch = self.repository.create_enrichment_batch(
+            provider='Test confirming enrichment source',
+            cost_per_record=.10,
+            budget_cap=10,
+            max_records=100,
+        )
+        lead = self.repository.list_leads()['items'][0]
+        with self.repository.Session.begin() as session:
+            session.get(Lead, lead['id']).phone = '9185550100'
+
+        self.repository.apply_enrichment_results(
+            batch['batch_id'],
+            [{'Lead ID': lead['id'], 'Phone': '(918) 555-0100'}],
+        )
+        detail = self.repository.get_lead(lead['id'])
+        confirmed = next(
+            item for item in detail['contact_points']
+            if item['id'] and item['kind'] == 'phone'
+        )
+
+        self.assertTrue(confirmed['is_primary'])
+
+        self.repository.update_contact_point(
+            lead['id'],
+            confirmed['id'],
+            {'status': 'do_not_contact'},
+        )
+        updated = self.repository.get_lead(lead['id'])
+
+        self.assertIsNone(updated['phone'])
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
