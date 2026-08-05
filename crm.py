@@ -1665,10 +1665,14 @@ class CRMRepository:
                 ContactPoint.normalized_value == normalized,
             ))
             legacy_value = lead.phone if kind == 'phone' else lead.email
+            legacy_matches = (
+                bool(legacy_value)
+                and normalize_contact_value(kind, legacy_value) == normalized
+            )
             make_primary = (
                 bool(payload.get('is_primary'))
                 or not legacy_value
-                or normalize_contact_value(kind, legacy_value) == normalized
+                or legacy_matches
             )
             if contact:
                 contact.source_name = source_name
@@ -1705,7 +1709,9 @@ class CRMRepository:
                     lead.phone = value
                 else:
                     lead.email = value
-            elif status != 'active' and contact.is_primary:
+            elif status != 'active' and (
+                contact.is_primary or legacy_matches
+            ):
                 contact.is_primary = False
                 replacement = session.scalar(
                     select(ContactPoint).where(
@@ -2379,30 +2385,26 @@ class CRMRepository:
                 if not phone and not email:
                     summary['no_data'] += 1
                     continue
-                conflict = (
-                    (
-                        phone and lead.phone
-                        and normalize_contact_value('phone', phone)
-                        != normalize_contact_value('phone', lead.phone)
-                    )
-                    or (
-                        email and lead.email
-                        and normalize_contact_value('email', email)
-                        != normalize_contact_value('email', lead.email)
-                    )
-                )
+                conflicts = []
                 added_point = False
+                accepted_primary = False
                 for kind, value in (('phone', phone), ('email', email)):
                     if not value:
                         continue
                     normalized = normalize_contact_value(kind, value)
+                    legacy_value = lead.phone if kind == 'phone' else lead.email
+                    if (
+                        legacy_value
+                        and normalize_contact_value(kind, legacy_value)
+                        != normalized
+                    ):
+                        conflicts.append(kind)
                     existing_point = session.scalar(select(ContactPoint).where(
                         ContactPoint.lead_id == lead.id,
                         ContactPoint.kind == kind,
                         ContactPoint.normalized_value == normalized,
                     ))
                     if not existing_point:
-                        legacy_value = lead.phone if kind == 'phone' else lead.email
                         session.add(ContactPoint(
                             lead_id=lead.id,
                             kind=kind,
@@ -2426,19 +2428,20 @@ class CRMRepository:
                             else:
                                 lead.email = value
                             lead.updated_at = now
+                            accepted_primary = True
                         added_point = True
-                if conflict:
+                if conflicts:
                     summary['conflicts'] += 1
                     session.add(LeadActivity(
                         lead_id=lead.id,
                         activity_type='enrichment_conflict',
                         detail=(
-                            f"Contact conflict from {batch.provider}; "
-                            "existing data preserved"
+                            f"Contact conflict from {batch.provider} "
+                            f"({', '.join(conflicts)}); existing primary "
+                            "preserved"
                         ),
                         created_at=now,
                     ))
-                    continue
                 changed = False
                 if phone and not lead.phone:
                     lead.phone = phone
@@ -2455,9 +2458,20 @@ class CRMRepository:
                         detail=f"Contact data imported from {batch.provider}",
                         created_at=now,
                     ))
-                elif added_point:
+                elif accepted_primary:
                     summary['leads_updated'] += 1
-                else:
+                    session.add(LeadActivity(
+                        lead_id=lead.id,
+                        activity_type='contact_enriched',
+                        detail=(
+                            f"Non-conflicting contact data imported from "
+                            f"{batch.provider}"
+                        ),
+                        created_at=now,
+                    ))
+                elif added_point and not conflicts:
+                    summary['leads_updated'] += 1
+                elif not conflicts:
                     summary['no_data'] += 1
             batch.status = (
                 'completed_with_conflicts'
