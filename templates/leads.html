@@ -280,7 +280,7 @@
           <div class="field"><label>Status</label><select id="edit-status">{% for status in statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select></div>
           <div class="field"><label>Priority</label><select id="edit-priority">{% for priority in priorities %}<option value="{{ priority }}">{{ priority.title() }}</option>{% endfor %}</select></div>
           <div class="field"><label>Research status</label><select id="edit-research">{% for status in research_statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select></div>
-          <div class="field"><label>Next follow-up</label><input type="date" id="edit-follow-up"></div>
+          <div class="field"><label>Next follow-up</label><input type="date" id="edit-follow-up"><div id="calendar-actions" style="display:none;margin-top:7px;gap:10px;font-size:9px"><a id="google-calendar" target="_blank" rel="noopener" style="color:var(--gold-bright)">Add to Google Calendar</a><a id="download-calendar" style="color:var(--muted)">Download .ics</a></div></div>
         </div>
       </section>
       <section class="section"><div class="section-title">Property & owner</div><div class="details" id="lead-details"></div></section>
@@ -408,6 +408,9 @@
       $('drawer-owner').textContent=lead.owner_name; $('drawer-property').textContent=lead.property_address || 'Property address unavailable';
       $('edit-status').value=lead.status; $('edit-priority').value=lead.priority; $('edit-research').value=lead.research_status;
       $('edit-follow-up').value=(lead.next_follow_up || '').slice(0,10);
+      $('calendar-actions').style.display=lead.next_follow_up?'flex':'none';
+      $('google-calendar').href=`/api/leads/${lead.id}/calendar?provider=google`;
+      $('download-calendar').href=`/api/leads/${lead.id}/calendar`;
       $('call-outcome').value=''; $('call-duration').value=''; $('call-follow-up').value=''; $('call-notes').value='';
       $('lead-details').innerHTML=[
         ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],

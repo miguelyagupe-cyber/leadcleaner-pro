@@ -47,6 +47,7 @@ from assessor import (
     normalize_account_no,
     verification_decision,
 )
+from calendar_export import event_ics, follow_up_event, google_calendar_url
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
@@ -1309,6 +1310,24 @@ def api_lead_detail(lead_id):
         return jsonify({'error': 'Lead not found'}), 404
     lead['research_plan'] = build_research_plan(lead)
     return jsonify(lead)
+
+
+@app.route('/api/leads/<int:lead_id>/calendar')
+def api_lead_calendar(lead_id):
+    lead = get_crm().get_lead(lead_id)
+    if not lead:
+        return jsonify({'error': 'Lead not found'}), 404
+    if not lead.get('next_follow_up'):
+        return jsonify({'error': 'Set a follow-up date before adding it to a calendar'}), 400
+    event = follow_up_event(lead, request.url_root)
+    if request.args.get('provider') == 'google':
+        return redirect(google_calendar_url(event))
+    return send_file(
+        io.BytesIO(event_ics(event)),
+        mimetype='text/calendar',
+        as_attachment=True,
+        download_name=f"lead-{lead_id}-follow-up.ics",
+    )
 
 
 @app.route('/api/leads/<int:lead_id>', methods=['PATCH'])

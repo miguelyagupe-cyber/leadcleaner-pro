@@ -134,6 +134,11 @@ Marking a lead `Disqualified` clears open follow-ups. A phone marked `Do Not
 Contact` is removed from the primary contact slot, clears its follow-up, and
 cannot be used to log another call.
 
+Every scheduled follow-up can be opened as a prefilled Google Calendar event
+or downloaded as a standards-compliant `.ics` file for Outlook, Apple Calendar,
+or another calendar provider. Calendar export is explicit and read-only: the CRM
+remains the source of truth, and no third-party credentials are stored.
+
 ## Contact ledger
 
 Approved county-list contacts and enrichment results are stored as sourced
