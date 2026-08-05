@@ -784,6 +784,40 @@ class CRMTest(unittest.TestCase):
         sender.assert_called_once()
         self.assertEqual(self.repository.list_operational_alerts()['unread'], 1)
 
+    def test_sms_alert_delivery_is_opted_in_urgent_and_durable(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': (date.today() - timedelta(days=1)).isoformat()},
+        )
+        app.config.update(
+            ALERT_DELIVERY_TOKEN='fictional-delivery-secret',
+            ALERT_SMS_ENABLED=True,
+            ALERT_SMS_TO='+19185550100',
+            ALERT_SMS_FROM='+19185550199',
+            PUBLIC_BASE_URL='https://leadcleaner.example.test',
+            TWILIO_ACCOUNT_SID='AC-fictional',
+            TWILIO_AUTH_TOKEN='fictional-token',
+        )
+
+        unauthorized = self.client.post('/api/alerts/deliver-sms')
+        with patch('app.send_alert_sms', return_value=1) as sender:
+            delivered = self.client.post(
+                '/api/alerts/deliver-sms',
+                headers={'Authorization': 'Bearer fictional-delivery-secret'},
+            )
+            repeated = self.client.post(
+                '/api/alerts/deliver-sms',
+                headers={'Authorization': 'Bearer fictional-delivery-secret'},
+            )
+
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(delivered.get_json()['delivered'], 1)
+        self.assertEqual(repeated.get_json()['delivered'], 0)
+        self.assertEqual(sender.call_args.args[1][0]['severity'], 'urgent')
+        sender.assert_called_once()
+        self.assertEqual(self.repository.list_operational_alerts()['unread'], 1)
+
     def test_pipeline_board_aggregates_stages_and_debt(self):
         board = self.repository.pipeline_board()
         stages = {stage['status']: stage for stage in board['stages']}
