@@ -129,6 +129,24 @@ outcome advances the pipeline automatically:
 - `Deal pending` → Contract pending
 - `Not interested` → Disqualified
 
+`Call later` is a first-class outcome and requires a future follow-up date.
+Marking a lead `Disqualified` clears open follow-ups. A phone marked `Do Not
+Contact` is removed from the primary contact slot, clears its follow-up, and
+cannot be used to log another call.
+
+## Contact ledger
+
+Approved county-list contacts and enrichment results are stored as sourced
+phone or email records rather than silently replacing one another. Each record
+keeps its source, confidence, label, notes, normalized identity, operational
+status, and primary-contact decision. Conflicts remain visible for manual
+resolution; only an active primary value is exposed to calling and pipeline
+workflows.
+
+Contact values can be marked `Invalid` or `Do Not Contact`. Phone and email
+formats are validated at the API boundary, duplicate normalized values are
+consolidated, and changing the primary value retains the full history.
+
 Outcomes that require another action cannot be saved without a follow-up date.
 The `Today` workspace lists active follow-ups due today or overdue, oldest
 first. Call history remains attached to the lead even when the lead later

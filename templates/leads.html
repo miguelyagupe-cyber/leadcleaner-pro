@@ -316,7 +316,7 @@
         <button class="gold-button" id="log-call">Save call outcome</button>
         <div id="calls-list"></div>
       </section>
-      <section class="section"><div class="section-title">Contact data</div><div class="field-grid"><div class="field"><label>Phone</label><input id="edit-phone" placeholder="Add phone number"></div><div class="field"><label>Email</label><input id="edit-email" type="email" placeholder="Add email address"></div></div><button class="gold-button" id="save-contact">Save contact</button></section>
+      <section class="section"><div class="section-title">Contact ledger</div><div class="field-grid"><div class="field"><label>Type</label><select id="contact-kind">{% for value in contact_kinds %}<option value="{{ value }}">{{ value.title() }}</option>{% endfor %}</select></div><div class="field"><label>Phone or email</label><input id="contact-value" placeholder="Contact value"></div><div class="field"><label>Source</label><input id="contact-source" placeholder="Provider, public record, owner…"></div><div class="field"><label>Confidence</label><select id="contact-confidence">{% for value in contact_confidence %}<option value="{{ value }}">{{ value.title() }}</option>{% endfor %}</select></div><div class="field"><label>Label</label><input id="contact-label" placeholder="Mobile, relative, home…"></div><div class="field"><label><input id="contact-primary" type="checkbox"> Use as primary contact</label></div></div><textarea id="contact-notes" placeholder="Who this reaches, validation result, relationship or limitations…" style="margin-top:10px;"></textarea><button class="gold-button" id="save-contact">Add contact point</button><div id="contact-list"></div></section>
       <section class="section"><div class="section-title">Add note</div><textarea id="note-body" placeholder="Record research context or a general internal note…"></textarea><button class="gold-button" id="add-note">Add note</button><div id="notes-list"></div></section>
       <section class="section"><div class="section-title">Activity history</div><div id="activity-list"></div></section>
     </div>
@@ -407,7 +407,7 @@
       state.selectedLead=lead;
       $('drawer-owner').textContent=lead.owner_name; $('drawer-property').textContent=lead.property_address || 'Property address unavailable';
       $('edit-status').value=lead.status; $('edit-priority').value=lead.priority; $('edit-research').value=lead.research_status;
-      $('edit-follow-up').value=(lead.next_follow_up || '').slice(0,10); $('edit-phone').value=lead.phone || ''; $('edit-email').value=lead.email || '';
+      $('edit-follow-up').value=(lead.next_follow_up || '').slice(0,10);
       $('call-outcome').value=''; $('call-duration').value=''; $('call-follow-up').value=''; $('call-notes').value='';
       $('lead-details').innerHTML=[
         ['Tax ID',lead.tax_id],['Total due',money.format(lead.total_due||0)],['Property city',lead.property_city],['Mailing address',lead.mailing_address],
@@ -415,7 +415,7 @@
         ['Research category',lead.research_category_label],['Deceased evidence',lead.deceased_flag?'County-data pattern flagged':'Not flagged'],['Mailing signal',lead.mailing_signal||'None'],['Research reason',lead.research_reason||'No active research signal']
       ].map(([key,value])=>`<div class="detail"><span>${key}</span><strong>${esc(value || '—')}</strong></div>`).join('');
       $('call-phone').value=lead.phone || '';
-      renderEvidence(lead.evidence, lead.evidence_summary); renderCalls(lead.calls); renderNotes(lead.notes); renderActivity(lead.activity);
+      renderEvidence(lead.evidence, lead.evidence_summary); renderCalls(lead.calls); renderContacts(lead.contact_points); renderNotes(lead.notes); renderActivity(lead.activity);
       renderResearchPlan(lead.research_plan);
       $('backdrop').classList.add('open'); $('drawer').classList.add('open');
     }
@@ -423,6 +423,17 @@
     function renderNotes(notes){ $('notes-list').innerHTML=notes?.length?notes.map(note=>`<div class="note"><p>${esc(note.body)}</p><time>${dateLabel(note.created_at)}</time></div>`).join(''):'<div class="note muted">No notes yet.</div>'; }
     function renderCalls(calls){
       $('calls-list').innerHTML=calls?.length?calls.map(call=>`<div class="call-card"><strong>${label(call.direction)} · ${label(call.outcome)}</strong><p>${call.phone_number?`Phone: ${esc(call.phone_number)}${call.duration_minutes!==null?` · ${esc(call.duration_minutes)} min`:''}<br>`:''}${call.notes?esc(call.notes):'No call notes'}${call.next_follow_up?`<br>Next follow-up: ${dateLabel(call.next_follow_up)}`:''}</p><time>${dateLabel(call.created_at)}</time></div>`).join(''):'<div class="note muted">No calls logged yet.</div>';
+    }
+    function renderContacts(items){
+      $('contact-list').innerHTML=items?.length?items.map(item=>`<div class="note"><p><strong>${esc(item.value)}</strong>${item.is_primary?' · Primary':''}<br>${label(item.kind)} · ${esc(item.label||'Unlabeled')} · ${label(item.confidence)} · ${label(item.status)}<br>Source: ${esc(item.source_name)}</p><button class="clear contact-primary" data-contact-id="${item.id||''}" type="button"${!item.id||item.status!=='active'||item.is_primary?' disabled':''}>Make primary</button> <button class="clear contact-invalid" data-contact-id="${item.id||''}" type="button"${!item.id||item.status!=='active'?' disabled':''}>Mark invalid</button> <button class="clear contact-dnc" data-contact-id="${item.id||''}" type="button"${!item.id||item.status!=='active'?' disabled':''}>Do not contact</button></div>`).join(''):'<div class="note muted">No sourced contact points recorded yet.</div>';
+      document.querySelectorAll('.contact-primary').forEach(button=>button.addEventListener('click',()=>updateContact(button.dataset.contactId,{is_primary:true})));
+      document.querySelectorAll('.contact-invalid').forEach(button=>button.addEventListener('click',()=>updateContact(button.dataset.contactId,{status:'invalid'})));
+      document.querySelectorAll('.contact-dnc').forEach(button=>button.addEventListener('click',()=>updateContact(button.dataset.contactId,{status:'do_not_contact'})));
+    }
+    async function updateContact(contactId,changes){
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/contacts/${contactId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(changes)}),data=await response.json();
+      if(!response.ok)return toast(data.error||'Contact could not be updated');
+      state.selectedLead=data.lead;renderContacts(data.lead.contact_points);renderActivity(data.lead.activity);$('call-phone').value=data.lead.phone||'';toast('Contact ledger updated');loadLeads();
     }
     function renderEvidence(items, summary){
       $('evidence-summary').innerHTML=`<strong>${esc(summary?.label || 'No evidence')}</strong><span>${esc(summary?.reason || 'No research evidence has been recorded')}</span>`;
@@ -459,7 +470,13 @@
       const field={ 'edit-status':'status','edit-priority':'priority','edit-research':'research_status','edit-follow-up':'next_follow_up' }[id];
       patchLead({[field]:event.target.value||null});
     }));
-    $('save-contact').addEventListener('click',()=>patchLead({phone:$('edit-phone').value.trim(),email:$('edit-email').value.trim()}));
+    $('save-contact').addEventListener('click',async()=>{
+      if(!state.selectedLead)return;
+      const payload={kind:$('contact-kind').value,value:$('contact-value').value.trim(),source_name:$('contact-source').value.trim(),confidence:$('contact-confidence').value,label:$('contact-label').value.trim(),is_primary:$('contact-primary').checked,notes:$('contact-notes').value.trim()};
+      const response=await fetch(`/api/leads/${state.selectedLead.id}/contacts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}),data=await response.json();
+      if(!response.ok)return toast(data.error||'Contact could not be saved');
+      state.selectedLead=data.lead;['contact-value','contact-source','contact-label','contact-notes'].forEach(id=>$(id).value='');$('contact-primary').checked=false;renderContacts(data.lead.contact_points);renderActivity(data.lead.activity);$('call-phone').value=data.lead.phone||'';toast('Contact point saved');loadLeads();
+    });
     $('log-call').addEventListener('click',async()=>{
       if(!state.selectedLead) return;
       const payload={
