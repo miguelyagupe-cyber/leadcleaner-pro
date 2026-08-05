@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import uuid
 from datetime import date, datetime, timezone
@@ -21,8 +22,10 @@ from sqlalchemy import (
     case,
     create_engine,
     func,
+    inspect,
     or_,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -77,6 +80,9 @@ PROBATE_CONTACT_ROLES = (
     'attorney',
     'other',
 )
+CONTACT_KINDS = ('phone', 'email')
+CONTACT_CONFIDENCE = ('unverified', 'probable', 'verified')
+CONTACT_STATUSES = ('active', 'invalid', 'do_not_contact')
 CALL_OUTCOMES = (
     'no_answer',
     'voicemail_left',
@@ -219,6 +225,14 @@ def _clean_source_identifier(value):
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
+
+
+def normalize_contact_value(kind, value):
+    value = str(value or '').strip()
+    if kind == 'email':
+        return value.lower()
+    digits = re.sub(r'\D', '', value)
+    return digits[-10:] if len(digits) >= 10 else digits
 
 
 def _lead_property_identity(lead):
@@ -466,6 +480,41 @@ class ProbateContact(Base):
     )
 
 
+class ContactPoint(Base):
+    __tablename__ = 'contact_points'
+    __table_args__ = (
+        Index('idx_contact_points_lead', 'lead_id'),
+        Index('idx_contact_points_status', 'status'),
+        Index(
+            'idx_contact_points_identity',
+            'lead_id',
+            'kind',
+            'normalized_value',
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey('leads.id', ondelete='CASCADE'), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_value: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(60))
+    source_name: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class AssessorVerification(Base):
     __tablename__ = 'assessor_verifications'
     __table_args__ = (Index('idx_assessor_status', 'status'),)
@@ -647,8 +696,40 @@ class CRMRepository:
         with self._initialize_lock:
             if self._initialized:
                 return
-            Base.metadata.create_all(self.engine)
+            # contact_points is intentionally excluded here. It is prepared and
+            # validated only by migrate.py before the web process starts.
+            Base.metadata.create_all(
+                self.engine,
+                tables=[
+                    table
+                    for table in Base.metadata.sorted_tables
+                    if table.name != 'contact_points'
+                ],
+            )
             self._initialized = True
+
+    def _require_contact_ledger_schema(self):
+        inspector = inspect(self.engine)
+        if not inspector.has_table('contact_points'):
+            raise RuntimeError(
+                'Contact ledger schema is unavailable; run migrate.py before '
+                'starting the application'
+            )
+        expected = {
+            'id', 'lead_id', 'kind', 'value', 'normalized_value', 'label',
+            'source_name', 'confidence', 'status', 'is_primary', 'notes',
+            'created_at', 'updated_at',
+        }
+        columns = {
+            item['name']
+            for item in inspector.get_columns('contact_points')
+        }
+        missing = expected - columns
+        if missing:
+            raise RuntimeError(
+                'Contact ledger schema is incomplete; missing: '
+                + ', '.join(sorted(missing))
+            )
 
     def health(self):
         with self.engine.connect() as connection:
@@ -1098,6 +1179,7 @@ class CRMRepository:
         }
 
     def get_lead(self, lead_id):
+        self._require_contact_ledger_schema()
         with self.Session() as session:
             lead = session.get(Lead, lead_id)
             if not lead:
@@ -1127,6 +1209,40 @@ class CRMRepository:
                 .where(ProbateContact.lead_id == lead_id)
                 .order_by(ProbateContact.created_at.desc())
             ).all()
+            contact_points = session.scalars(
+                select(ContactPoint)
+                .where(ContactPoint.lead_id == lead_id)
+                .order_by(
+                    ContactPoint.is_primary.desc(),
+                    ContactPoint.created_at.desc(),
+                )
+            ).all()
+            contact_payload = [_as_dict(item) for item in contact_points]
+            recorded = {
+                (item['kind'], item['normalized_value'])
+                for item in contact_payload
+            }
+            for kind, value in (('phone', lead.phone), ('email', lead.email)):
+                normalized = normalize_contact_value(kind, value)
+                if normalized and (kind, normalized) not in recorded:
+                    contact_payload.append({
+                        'id': None,
+                        'lead_id': lead.id,
+                        'kind': kind,
+                        'value': value,
+                        'normalized_value': normalized,
+                        'label': 'Legacy primary',
+                        'source_name': 'Existing CRM record',
+                        'confidence': 'unverified',
+                        'status': 'active',
+                        'is_primary': True,
+                        'notes': (
+                            'Original contact field; record a sourced contact '
+                            'point to validate it'
+                        ),
+                        'created_at': None,
+                        'updated_at': None,
+                    })
             return {
                 **_as_dict(lead),
                 'research_reason': research_reason(lead),
@@ -1139,6 +1255,7 @@ class CRMRepository:
                 'probate_contacts': [
                     _as_dict(item) for item in probate_contacts
                 ],
+                'contact_points': contact_payload,
             }
 
     def list_probate_cases(
@@ -1514,6 +1631,174 @@ class CRMRepository:
             'contact_id': contact_id,
             'lead': self.get_lead(lead_id),
         }
+
+    def add_contact_point(self, lead_id, payload):
+        self._require_contact_ledger_schema()
+        kind = str(payload.get('kind') or '').strip().lower()
+        value = str(payload.get('value') or '').strip()
+        source_name = str(payload.get('source_name') or '').strip()
+        confidence = str(payload.get('confidence') or 'unverified').strip().lower()
+        status = str(payload.get('status') or 'active').strip().lower()
+        if kind not in CONTACT_KINDS:
+            raise ValueError('Contact kind must be phone or email')
+        normalized = normalize_contact_value(kind, value)
+        if not value or not normalized:
+            raise ValueError('Contact value is required')
+        if kind == 'phone' and len(normalized) != 10:
+            raise ValueError('A valid 10-digit phone number is required')
+        if kind == 'email' and ('@' not in value or value.startswith('@')):
+            raise ValueError('A valid email address is required')
+        if not source_name:
+            raise ValueError('Contact source is required')
+        if confidence not in CONTACT_CONFIDENCE:
+            raise ValueError('Invalid contact confidence')
+        if status not in CONTACT_STATUSES:
+            raise ValueError('Invalid contact status')
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            if not lead:
+                return None
+            contact = session.scalar(select(ContactPoint).where(
+                ContactPoint.lead_id == lead_id,
+                ContactPoint.kind == kind,
+                ContactPoint.normalized_value == normalized,
+            ))
+            legacy_value = lead.phone if kind == 'phone' else lead.email
+            make_primary = (
+                bool(payload.get('is_primary'))
+                or not legacy_value
+                or normalize_contact_value(kind, legacy_value) == normalized
+            )
+            if contact:
+                contact.source_name = source_name
+                contact.confidence = confidence
+                contact.status = status
+                contact.label = str(payload.get('label') or '').strip() or None
+                contact.notes = str(payload.get('notes') or '').strip() or None
+                contact.updated_at = now
+            else:
+                contact = ContactPoint(
+                    lead_id=lead_id,
+                    kind=kind,
+                    value=value,
+                    normalized_value=normalized,
+                    label=str(payload.get('label') or '').strip() or None,
+                    source_name=source_name,
+                    confidence=confidence,
+                    status=status,
+                    is_primary=False,
+                    notes=str(payload.get('notes') or '').strip() or None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(contact)
+                session.flush()
+            if make_primary and status == 'active':
+                session.execute(update(ContactPoint).where(
+                    ContactPoint.lead_id == lead_id,
+                    ContactPoint.kind == kind,
+                    ContactPoint.id != contact.id,
+                ).values(is_primary=False))
+                contact.is_primary = True
+                if kind == 'phone':
+                    lead.phone = value
+                else:
+                    lead.email = value
+            elif status != 'active' and contact.is_primary:
+                contact.is_primary = False
+                replacement = session.scalar(
+                    select(ContactPoint).where(
+                        ContactPoint.lead_id == lead_id,
+                        ContactPoint.kind == kind,
+                        ContactPoint.status == 'active',
+                        ContactPoint.id != contact.id,
+                    ).order_by(
+                        case(
+                            (ContactPoint.confidence == 'verified', 0),
+                            (ContactPoint.confidence == 'probable', 1),
+                            else_=2,
+                        ),
+                        ContactPoint.created_at.desc(),
+                    )
+                )
+                if replacement:
+                    replacement.is_primary = True
+                replacement_value = replacement.value if replacement else None
+                if kind == 'phone':
+                    lead.phone = replacement_value
+                else:
+                    lead.email = replacement_value
+            lead.updated_at = now
+            contact_id = contact.id
+            session.add(LeadActivity(
+                lead_id=lead_id,
+                activity_type='contact_point_recorded',
+                detail=f"{kind.title()} recorded from {source_name}",
+                created_at=now,
+            ))
+        return {'contact_id': contact_id, 'lead': self.get_lead(lead_id)}
+
+    def update_contact_point(self, lead_id, contact_id, payload):
+        self._require_contact_ledger_schema()
+        now = utc_now()
+        with self.Session.begin() as session:
+            lead = session.get(Lead, lead_id)
+            contact = session.get(ContactPoint, contact_id)
+            if not lead or not contact or contact.lead_id != lead_id:
+                return None
+            status = str(payload.get('status') or contact.status).strip().lower()
+            confidence = str(payload.get('confidence') or contact.confidence).strip().lower()
+            if status not in CONTACT_STATUSES:
+                raise ValueError('Invalid contact status')
+            if confidence not in CONTACT_CONFIDENCE:
+                raise ValueError('Invalid contact confidence')
+            contact.status = status
+            contact.confidence = confidence
+            contact.updated_at = now
+            if payload.get('is_primary') and status == 'active':
+                session.execute(update(ContactPoint).where(
+                    ContactPoint.lead_id == lead_id,
+                    ContactPoint.kind == contact.kind,
+                    ContactPoint.id != contact.id,
+                ).values(is_primary=False))
+                contact.is_primary = True
+                if contact.kind == 'phone':
+                    lead.phone = contact.value
+                else:
+                    lead.email = contact.value
+            elif status != 'active' and contact.is_primary:
+                contact.is_primary = False
+                replacement = session.scalar(
+                    select(ContactPoint).where(
+                        ContactPoint.lead_id == lead_id,
+                        ContactPoint.kind == contact.kind,
+                        ContactPoint.status == 'active',
+                        ContactPoint.id != contact.id,
+                    ).order_by(
+                        case(
+                            (ContactPoint.confidence == 'verified', 0),
+                            (ContactPoint.confidence == 'probable', 1),
+                            else_=2,
+                        ),
+                        ContactPoint.created_at.desc(),
+                    )
+                )
+                if replacement:
+                    replacement.is_primary = True
+                replacement_value = replacement.value if replacement else None
+                if contact.kind == 'phone':
+                    lead.phone = replacement_value
+                else:
+                    lead.email = replacement_value
+            lead.updated_at = now
+            session.add(LeadActivity(
+                lead_id=lead_id,
+                activity_type='contact_point_updated',
+                detail=f"{contact.kind.title()} marked {status}",
+                created_at=now,
+            ))
+        return {'lead': self.get_lead(lead_id)}
 
     def retract_evidence(self, lead_id, evidence_id, reason):
         reason = str(reason or '').strip()
@@ -2060,6 +2345,7 @@ class CRMRepository:
             return result
 
     def apply_enrichment_results(self, batch_id, rows):
+        self._require_contact_ledger_schema()
         now = utc_now()
         with self.Session.begin() as session:
             batch = session.scalar(
@@ -2094,9 +2380,53 @@ class CRMRepository:
                     summary['no_data'] += 1
                     continue
                 conflict = (
-                    (phone and lead.phone and phone != lead.phone)
-                    or (email and lead.email and email.lower() != lead.email.lower())
+                    (
+                        phone and lead.phone
+                        and normalize_contact_value('phone', phone)
+                        != normalize_contact_value('phone', lead.phone)
+                    )
+                    or (
+                        email and lead.email
+                        and normalize_contact_value('email', email)
+                        != normalize_contact_value('email', lead.email)
+                    )
                 )
+                added_point = False
+                for kind, value in (('phone', phone), ('email', email)):
+                    if not value:
+                        continue
+                    normalized = normalize_contact_value(kind, value)
+                    existing_point = session.scalar(select(ContactPoint).where(
+                        ContactPoint.lead_id == lead.id,
+                        ContactPoint.kind == kind,
+                        ContactPoint.normalized_value == normalized,
+                    ))
+                    if not existing_point:
+                        legacy_value = lead.phone if kind == 'phone' else lead.email
+                        session.add(ContactPoint(
+                            lead_id=lead.id,
+                            kind=kind,
+                            value=value,
+                            normalized_value=normalized,
+                            label='Skip trace result',
+                            source_name=batch.provider,
+                            confidence='unverified',
+                            status='active',
+                            is_primary=not bool(legacy_value),
+                            notes=(
+                                'Imported as an alternate; existing primary preserved'
+                                if legacy_value else None
+                            ),
+                            created_at=now,
+                            updated_at=now,
+                        ))
+                        if not legacy_value:
+                            if kind == 'phone':
+                                lead.phone = value
+                            else:
+                                lead.email = value
+                            lead.updated_at = now
+                        added_point = True
                 if conflict:
                     summary['conflicts'] += 1
                     session.add(LeadActivity(
@@ -2125,6 +2455,8 @@ class CRMRepository:
                         detail=f"Contact data imported from {batch.provider}",
                         created_at=now,
                     ))
+                elif added_point:
+                    summary['leads_updated'] += 1
                 else:
                     summary['no_data'] += 1
             batch.status = (
