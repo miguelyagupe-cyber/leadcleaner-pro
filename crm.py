@@ -2393,11 +2393,12 @@ class CRMRepository:
                         continue
                     normalized = normalize_contact_value(kind, value)
                     legacy_value = lead.phone if kind == 'phone' else lead.email
-                    if (
+                    matches_legacy = bool(
                         legacy_value
                         and normalize_contact_value(kind, legacy_value)
-                        != normalized
-                    ):
+                        == normalized
+                    )
+                    if legacy_value and not matches_legacy:
                         conflicts.append(kind)
                     existing_point = session.scalar(select(ContactPoint).where(
                         ContactPoint.lead_id == lead.id,
@@ -2414,10 +2415,10 @@ class CRMRepository:
                             source_name=batch.provider,
                             confidence='unverified',
                             status='active',
-                            is_primary=not bool(legacy_value),
+                            is_primary=not bool(legacy_value) or matches_legacy,
                             notes=(
                                 'Imported as an alternate; existing primary preserved'
-                                if legacy_value else None
+                                if legacy_value and not matches_legacy else None
                             ),
                             created_at=now,
                             updated_at=now,
