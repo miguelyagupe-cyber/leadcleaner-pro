@@ -252,7 +252,12 @@ alert at most once, without changing its read state. Configure `ALERT_EMAIL_TO`,
 `SMTP_USERNAME`, `SMTP_PASSWORD`, and a long random `ALERT_DELIVERY_TOKEN`.
 Schedule a trusted POST to `/api/alerts/deliver` with
 `Authorization: Bearer <ALERT_DELIVERY_TOKEN>`; an empty queue sends no email.
-SMS remains an unconnected external channel.
+Urgent alerts can also be delivered once by SMS through Twilio. SMS is disabled
+by default and requires explicit opt-in with `ALERT_SMS_ENABLED=true`, plus
+`ALERT_SMS_TO`, `ALERT_SMS_FROM`, `TWILIO_ACCOUNT_SID` and
+`TWILIO_AUTH_TOKEN`. Schedule the same trusted bearer token against
+`POST /api/alerts/deliver-sms`. Only unread urgent alerts are sent; successful
+delivery is recorded independently from email and never marks the inbox read.
 
 ## CRM database
 
