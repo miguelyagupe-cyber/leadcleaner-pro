@@ -1359,6 +1359,37 @@ def api_add_probate_contact(lead_id):
     return jsonify({'success': True, **result}), 201
 
 
+@app.route('/api/leads/<int:lead_id>/contacts', methods=['POST'])
+def api_add_contact_point(lead_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = get_crm().add_contact_point(lead_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except RuntimeError as error:
+        return jsonify({'error': str(error)}), 503
+    if not result:
+        return jsonify({'error': 'Lead not found'}), 404
+    return jsonify({'success': True, **result}), 201
+
+
+@app.route(
+    '/api/leads/<int:lead_id>/contacts/<int:contact_id>',
+    methods=['PATCH'],
+)
+def api_update_contact_point(lead_id, contact_id):
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = get_crm().update_contact_point(lead_id, contact_id, payload)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 400
+    except RuntimeError as error:
+        return jsonify({'error': str(error)}), 503
+    if not result:
+        return jsonify({'error': 'Lead or contact not found'}), 404
+    return jsonify({'success': True, **result})
+
+
 @app.route(
     '/api/leads/<int:lead_id>/evidence/<int:evidence_id>',
     methods=['DELETE'],
