@@ -2388,6 +2388,7 @@ class CRMRepository:
                 conflicts = []
                 added_point = False
                 accepted_primary = False
+                blocked_operational = set()
                 for kind, value in (('phone', phone), ('email', email)):
                     if not value:
                         continue
@@ -2405,6 +2406,11 @@ class CRMRepository:
                         ContactPoint.kind == kind,
                         ContactPoint.normalized_value == normalized,
                     ))
+                    if (
+                        existing_point
+                        and existing_point.status != 'active'
+                    ):
+                        blocked_operational.add(kind)
                     if not existing_point:
                         session.add(ContactPoint(
                             lead_id=lead.id,
@@ -2444,10 +2450,18 @@ class CRMRepository:
                         created_at=now,
                     ))
                 changed = False
-                if phone and not lead.phone:
+                if (
+                    phone
+                    and not lead.phone
+                    and 'phone' not in blocked_operational
+                ):
                     lead.phone = phone
                     changed = True
-                if email and not lead.email:
+                if (
+                    email
+                    and not lead.email
+                    and 'email' not in blocked_operational
+                ):
                     lead.email = email
                     changed = True
                 if changed:
