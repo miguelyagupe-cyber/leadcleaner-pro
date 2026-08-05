@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import unittest
 import io
+from unittest.mock import patch
 from datetime import date, timedelta
 
 import pandas as pd
@@ -750,6 +751,38 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(after['unread'], 2)
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Nothing important slips through.', page.data)
+
+    def test_email_alert_delivery_is_authorized_deduplicated_and_durable(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': (date.today() - timedelta(days=1)).isoformat()},
+        )
+        app.config.update(
+            ALERT_DELIVERY_TOKEN='fictional-delivery-secret',
+            ALERT_EMAIL_TO='daryl@example.test',
+            ALERT_EMAIL_FROM='alerts@example.test',
+            PUBLIC_BASE_URL='https://leadcleaner.example.test',
+            SMTP_HOST='smtp.example.test',
+        )
+
+        unauthorized = self.client.post('/api/alerts/deliver')
+        with patch('app.send_alert_digest', return_value=1) as sender:
+            delivered = self.client.post(
+                '/api/alerts/deliver',
+                headers={'Authorization': 'Bearer fictional-delivery-secret'},
+            )
+            repeated = self.client.post(
+                '/api/alerts/deliver',
+                headers={'Authorization': 'Bearer fictional-delivery-secret'},
+            )
+
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(delivered.get_json()['delivered'], 1)
+        self.assertEqual(repeated.get_json()['delivered'], 0)
+        self.assertEqual(sender.call_args_list[0].args[1][0]['alert_type'], 'overdue_follow_up')
+        sender.assert_called_once()
+        self.assertEqual(self.repository.list_operational_alerts()['unread'], 1)
 
     def test_pipeline_board_aggregates_stages_and_debt(self):
         board = self.repository.pipeline_board()

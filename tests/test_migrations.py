@@ -34,6 +34,11 @@ class SchemaMigrationTest(unittest.TestCase):
         self.assertIn('idx_contact_points_lead', indexes)
         self.assertIn('idx_contact_points_status', indexes)
         self.assertTrue(indexes['idx_contact_points_identity']['unique'])
+        alert_columns = {
+            item['name']
+            for item in inspector.get_columns('operational_alerts')
+        }
+        self.assertIn('emailed_at', alert_columns)
         repository.engine.dispose()
 
     def test_migration_is_idempotent_and_preserves_existing_rows(self):

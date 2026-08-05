@@ -48,6 +48,7 @@ from assessor import (
     verification_decision,
 )
 from calendar_export import event_ics, follow_up_event, google_calendar_url
+from alert_email import send_alert_digest
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_bytes(32)
@@ -66,6 +67,15 @@ app.config['ASSESSOR_CLIENT_FACTORY'] = TulsaAssessorClient
 app.config['GOOGLE_DRIVE_CLIENT_ID'] = os.environ.get('GOOGLE_DRIVE_CLIENT_ID', '')
 app.config['GOOGLE_DRIVE_API_KEY'] = os.environ.get('GOOGLE_DRIVE_API_KEY', '')
 app.config['GOOGLE_DRIVE_HTTP'] = requests
+app.config['ALERT_EMAIL_TO'] = os.environ.get('ALERT_EMAIL_TO', '')
+app.config['ALERT_EMAIL_FROM'] = os.environ.get('ALERT_EMAIL_FROM', '')
+app.config['ALERT_DELIVERY_TOKEN'] = os.environ.get('ALERT_DELIVERY_TOKEN', '')
+app.config['PUBLIC_BASE_URL'] = os.environ.get('PUBLIC_BASE_URL', '')
+app.config['SMTP_HOST'] = os.environ.get('SMTP_HOST', '')
+app.config['SMTP_PORT'] = int(os.environ.get('SMTP_PORT', '587'))
+app.config['SMTP_USERNAME'] = os.environ.get('SMTP_USERNAME', '')
+app.config['SMTP_PASSWORD'] = os.environ.get('SMTP_PASSWORD', '')
+app.config['SMTP_STARTTLS'] = os.environ.get('SMTP_STARTTLS', 'true').lower() == 'true'
 app.config['CRM_DATABASE'] = os.environ.get(
     'CRM_DATABASE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'leadcleaner.db')
@@ -102,7 +112,7 @@ def inject_security_context():
 def protect_private_workspace():
     if app.config.get('TESTING') and not app.config.get('TEST_AUTH_ENABLED'):
         return None
-    if request.endpoint in ('login', 'api_health') or request.endpoint == 'static':
+    if request.endpoint in ('login', 'api_health', 'api_deliver_alert_emails') or request.endpoint == 'static':
         return None
     if not session.get('authenticated'):
         if request.path.startswith('/api/'):
@@ -1229,6 +1239,27 @@ def api_mark_operational_alert(alert_id):
 def api_mark_all_operational_alerts():
     count = get_crm().mark_all_operational_alerts()
     return jsonify({'success': True, 'updated': count})
+
+
+@app.route('/api/alerts/deliver', methods=['POST'])
+def api_deliver_alert_emails():
+    configured_token = app.config.get('ALERT_DELIVERY_TOKEN', '')
+    supplied_token = request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
+    if not configured_token or not hmac.compare_digest(supplied_token, configured_token):
+        return jsonify({'error': 'Alert delivery authorization failed'}), 401
+    repository = get_crm()
+    alerts = repository.pending_email_alerts()
+    if not alerts:
+        return jsonify({'success': True, 'delivered': 0})
+    try:
+        delivered = send_alert_digest(app.config, alerts)
+    except ValueError as error:
+        return jsonify({'error': str(error)}), 503
+    except Exception:
+        app.logger.exception('Operational alert email delivery failed')
+        return jsonify({'error': 'Email provider could not deliver alerts'}), 502
+    repository.mark_alerts_emailed([item['id'] for item in alerts])
+    return jsonify({'success': True, 'delivered': delivered})
 
 
 @app.route('/api/today/check-in', methods=['POST'])

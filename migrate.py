@@ -34,8 +34,6 @@ CONTACT_POINT_COLUMNS = {
     'created_at',
     'updated_at',
 }
-
-
 def contact_points_table():
     metadata = MetaData()
     Table(
@@ -102,6 +100,15 @@ def _verify_contact_points_schema(connection):
         )
 
 
+def _migrate_operational_alerts(connection):
+    inspector = inspect(connection)
+    columns = {item['name'] for item in inspector.get_columns('operational_alerts')}
+    if 'emailed_at' not in columns:
+        connection.execute(text(
+            'ALTER TABLE operational_alerts ADD COLUMN emailed_at TIMESTAMP'
+        ))
+
+
 def run_migrations(database_target):
     repository = CRMRepository(database_target)
     repository.initialize()
@@ -114,6 +121,7 @@ def run_migrations(database_target):
         for index in table.indexes:
             index.create(connection, checkfirst=True)
         _verify_contact_points_schema(connection)
+        _migrate_operational_alerts(connection)
 
     repository.engine.dispose()
 

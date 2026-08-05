@@ -246,7 +246,13 @@ fingerprint, so repeated polling never creates duplicate alerts.
 Unread counts appear on the dashboard and the alert inbox refreshes every
 minute. Daryl can open the exact affected workflow, mark individual alerts
 read, or clear the unread inbox while retaining its history. These are in-app
-alerts only; email and SMS delivery remain unconnected external channels.
+alerts remain the source of truth. Optional email digests deliver each unread
+alert at most once, without changing its read state. Configure `ALERT_EMAIL_TO`,
+`ALERT_EMAIL_FROM`, `PUBLIC_BASE_URL`, `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USERNAME`, `SMTP_PASSWORD`, and a long random `ALERT_DELIVERY_TOKEN`.
+Schedule a trusted POST to `/api/alerts/deliver` with
+`Authorization: Bearer <ALERT_DELIVERY_TOKEN>`; an empty queue sends no email.
+SMS remains an unconnected external channel.
 
 ## CRM database
 
