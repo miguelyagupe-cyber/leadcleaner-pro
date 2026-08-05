@@ -107,6 +107,10 @@ def _migrate_operational_alerts(connection):
         connection.execute(text(
             'ALTER TABLE operational_alerts ADD COLUMN emailed_at TIMESTAMP'
         ))
+    if 'sms_sent_at' not in columns:
+        connection.execute(text(
+            'ALTER TABLE operational_alerts ADD COLUMN sms_sent_at TIMESTAMP'
+        ))
 
 
 def run_migrations(database_target):
