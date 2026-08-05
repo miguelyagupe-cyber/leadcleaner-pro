@@ -44,6 +44,7 @@ class ApprovedImportTest(unittest.TestCase):
                     'Current Assessor Owner': f'CURRENT OWNER {property_number}',
                     'Current Owner Verification': decision,
                     'TotalDue': index * 1000,
+                    'Phone': '9185550101' if index in (1, 2) else '',
                     'Address': f'TEST MAILING ADDRESS {index}',
                     'OWNR_ADDR 6': 'TULSA',
                     'OWNR_ADDR ST': 'OK',
@@ -159,6 +160,42 @@ class ApprovedImportTest(unittest.TestCase):
         )
         self.assertEqual(consolidated['total_due'], 3000)
         self.assertEqual(consolidated['tax_id'], 'TEST-2 | TEST-1')
+
+    def test_approved_contact_flows_into_ledger_and_call_pipeline(self):
+        preview = self.client.get(
+            '/api/import/approval-job/preview'
+        ).get_json()
+        self.client.post(
+            '/api/import/approval-job/commit',
+            json={
+                'approval_token': preview['approval_token'],
+                'confirmation': 'IMPORT VERIFIED CANDIDATES',
+            },
+        )
+        lead = next(
+            item for item in self.repository.list_leads()['items']
+            if item['owner_name'] == 'CURRENT OWNER 1'
+        )
+        detail = self.repository.get_lead(lead['id'])
+        follow_up = pd.Timestamp.today().date() + pd.Timedelta(days=2)
+        call = self.client.post(
+            f"/api/leads/{lead['id']}/calls",
+            json={
+                'direction': 'outbound',
+                'outcome': 'call_later',
+                'phone_number': detail['phone'],
+                'next_follow_up': follow_up.isoformat(),
+            },
+        )
+
+        self.assertEqual(len(detail['contact_points']), 1)
+        self.assertEqual(
+            detail['contact_points'][0]['source_name'],
+            'test-source.xlsx',
+        )
+        self.assertTrue(detail['contact_points'][0]['is_primary'])
+        self.assertEqual(call.status_code, 201)
+        self.assertEqual(call.get_json()['lead']['status'], 'attempted_contact')
 
     def test_review_and_unchecked_records_never_enter_crm(self):
         preview = self.client.get(

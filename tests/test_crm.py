@@ -307,6 +307,89 @@ class CRMTest(unittest.TestCase):
                 {'direction': 'outbound', 'outcome': 'no_answer'},
             )
 
+    def test_call_later_requires_and_schedules_follow_up(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        follow_up = (date.today() + timedelta(days=3)).isoformat()
+
+        result = self.repository.log_call(
+            lead_id,
+            {
+                'direction': 'outbound',
+                'outcome': 'call_later',
+                'phone_number': '9185550101',
+                'next_follow_up': follow_up,
+            },
+        )
+
+        self.assertEqual(result['lead']['status'], 'attempted_contact')
+        self.assertEqual(result['lead']['next_follow_up'], follow_up)
+
+    def test_do_not_contact_blocks_calls_and_clears_follow_up(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        created = self.repository.add_contact_point(
+            lead_id,
+            {
+                'kind': 'phone',
+                'value': '(918) 555-0199',
+                'source_name': 'Owner request',
+                'confidence': 'verified',
+                'is_primary': True,
+            },
+        )
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': (date.today() + timedelta(days=1)).isoformat()},
+        )
+        self.repository.update_contact_point(
+            lead_id,
+            created['contact_id'],
+            {'status': 'do_not_contact'},
+        )
+
+        with self.assertRaisesRegex(ValueError, 'Do Not Contact'):
+            self.repository.log_call(
+                lead_id,
+                {
+                    'direction': 'outbound',
+                    'outcome': 'not_interested',
+                    'phone_number': '918-555-0199',
+                },
+            )
+        detail = self.repository.get_lead(lead_id)
+        self.assertIsNone(detail['next_follow_up'])
+        self.assertIsNone(detail['phone'])
+
+    def test_not_interested_direct_status_clears_follow_up(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        self.repository.update_lead(
+            lead_id,
+            {'next_follow_up': (date.today() + timedelta(days=1)).isoformat()},
+        )
+
+        detail = self.repository.update_lead(
+            lead_id,
+            {'status': 'disqualified'},
+        )
+
+        self.assertEqual(detail['status'], 'disqualified')
+        self.assertIsNone(detail['next_follow_up'])
+
+    def test_contact_validation_rejects_bad_phone_and_email(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        for kind, value, message in (
+            ('phone', '123', 'valid phone'),
+            ('email', 'missing-at.example.com', 'valid email'),
+        ):
+            with self.assertRaisesRegex(ValueError, message):
+                self.repository.add_contact_point(
+                    lead_id,
+                    {
+                        'kind': kind,
+                        'value': value,
+                        'source_name': 'Manual entry',
+                    },
+                )
+
     def test_call_api_returns_updated_lead(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
         response = self.client.post(
@@ -841,8 +924,56 @@ class CRMTest(unittest.TestCase):
         self.assertEqual(detail['phone'], '9185550100')
         self.assertEqual(conflict['result_summary']['conflicts'], 1)
         self.assertEqual(detail['activity'][0]['activity_type'], 'enrichment_conflict')
+        self.assertEqual(len(detail['contact_points']), 2)
+        self.assertTrue(any(
+            item['value'] == '9185559999'
+            and not item['is_primary']
+            for item in detail['contact_points']
+        ))
         self.assertEqual(page.status_code, 200)
         self.assertIn(b'Control the cost before you enrich.', page.data)
+
+    def test_contact_ledger_preserves_sources_and_controls_primary_status(self):
+        lead_id = self.repository.list_leads()['items'][0]['id']
+        first = self.client.post(
+            f'/api/leads/{lead_id}/contacts',
+            json={
+                'kind': 'phone',
+                'value': '(918) 555-0101',
+                'source_name': 'Owner callback',
+                'confidence': 'verified',
+                'label': 'Mobile',
+            },
+        )
+        second = self.client.post(
+            f'/api/leads/{lead_id}/contacts',
+            json={
+                'kind': 'phone',
+                'value': '918-555-0102',
+                'source_name': 'Manual public-record research',
+                'confidence': 'probable',
+                'is_primary': True,
+            },
+        )
+        first_id = first.get_json()['contact_id']
+        invalid = self.client.patch(
+            f'/api/leads/{lead_id}/contacts/{first_id}',
+            json={'status': 'invalid'},
+        )
+        detail = self.repository.get_lead(lead_id)
+        page = self.client.get('/leads')
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(invalid.status_code, 200)
+        self.assertEqual(detail['phone'], '918-555-0102')
+        self.assertEqual(len(detail['contact_points']), 2)
+        self.assertEqual(
+            next(item for item in detail['contact_points'] if item['id'] == first_id)['status'],
+            'invalid',
+        )
+        self.assertIn(b'Contact ledger', page.data)
+        self.assertIn(b'Do not contact', page.data)
 
     def test_retraction_preserves_record_and_removes_its_effect(self):
         lead_id = self.repository.list_leads()['items'][0]['id']
