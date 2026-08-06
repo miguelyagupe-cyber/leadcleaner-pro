@@ -251,6 +251,7 @@
         {% endif %}
 
         <section class="toolbar">
+          <select id="campaign-filter"><option value="">All campaigns</option></select>
           <input class="search" id="search" placeholder="Search owner, property address or Tax ID…">
           <select id="status-filter"><option value="">All statuses</option>{% for status in statuses %}<option value="{{ status }}">{{ status.replace('_',' ').title() }}</option>{% endfor %}</select>
           <select id="priority-filter"><option value="">All priorities</option>{% for priority in priorities %}<option value="{{ priority }}">{{ priority.title() }}</option>{% endfor %}</select>
@@ -354,6 +355,7 @@
       if($('search').value.trim()) query.set('q',$('search').value.trim());
       if($('status-filter').value) query.set('status',$('status-filter').value);
       if($('priority-filter').value) query.set('priority',$('priority-filter').value);
+      if($('campaign-filter').value) query.set('campaign_id',$('campaign-filter').value);
       if(pageMode === 'research') query.set('research_only','true');
       if(pageMode === 'research' && state.researchCategory) query.set('research_category',state.researchCategory);
       if(pageMode === 'today') query.set('follow_up','due');
@@ -516,8 +518,8 @@
       state.selectedLead=data.lead; renderEvidence(data.lead.evidence,data.lead.evidence_summary); renderActivity(data.lead.activity); $('edit-research').value=data.lead.research_status; toast('Evidence added'); loadLeads(); if(pageMode==='today') loadDailyExecution();
     });
     $('search').addEventListener('input',()=>{ clearTimeout(state.timer); state.timer=setTimeout(()=>{state.page=1;loadLeads();},250); });
-    ['status-filter','priority-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
-    $('clear-filters').addEventListener('click',()=>{$('search').value='';$('status-filter').value='';$('priority-filter').value='';state.researchCategory='';state.page=1;loadLeads();});
+    ['status-filter','priority-filter','campaign-filter'].forEach(id=>$(id).addEventListener('change',()=>{state.page=1;loadLeads();}));
+    $('clear-filters').addEventListener('click',()=>{$('search').value='';$('status-filter').value='';$('priority-filter').value='';$('campaign-filter').value='';state.researchCategory='';state.page=1;loadLeads();});
     if(pageMode==='research') document.querySelector('#research-lanes .all').addEventListener('click',()=>selectResearchCategory(''));
     $('previous-page').addEventListener('click',()=>{if(state.page>1){state.page--;loadLeads();}});
     $('next-page').addEventListener('click',()=>{if(state.page<state.pages){state.page++;loadLeads();}});
@@ -542,7 +544,8 @@
       loadDailyExecution();
     }
     const initial=new URLSearchParams(location.search); if(initial.get('status')) $('status-filter').value=initial.get('status');
-    loadLeads().then(()=>{if(initial.get('lead'))openLead(initial.get('lead'));});
+    async function loadCampaigns(){const response=await fetch('/api/campaigns'),data=await response.json();$('campaign-filter').innerHTML='<option value="">All campaigns</option>'+data.campaigns.map(item=>`<option value="${item.id}">${esc(item.name)} · ${number.format(item.lead_count)}</option>`).join('');if(initial.get('campaign_id'))$('campaign-filter').value=initial.get('campaign_id');await loadLeads();if(initial.get('lead'))openLead(initial.get('lead'))}
+    loadCampaigns();
   </script>
 </body>
 </html>

@@ -113,6 +113,42 @@ def _migrate_operational_alerts(connection):
         ))
 
 
+def _migrate_campaigns_and_skip_trace(connection):
+    inspector = inspect(connection)
+    columns = {
+        item['name'] for item in inspector.get_columns('enrichment_batches')
+    }
+    additions = {
+        'campaign_id': 'INTEGER',
+        'selection_mode': 'VARCHAR(30)',
+        'actual_cost': 'FLOAT',
+        'error_json': 'TEXT',
+    }
+    for name, sql_type in additions.items():
+        if name not in columns:
+            connection.execute(text(
+                f'ALTER TABLE enrichment_batches ADD COLUMN {name} {sql_type}'
+            ))
+    # Every historical import becomes an independently filterable campaign.
+    existing_jobs = {
+        row[0] for row in connection.execute(text('SELECT source_job_id FROM campaigns'))
+    }
+    for row in connection.execute(text(
+        'SELECT job_id, source_filename, tax_year, created_at FROM import_runs'
+    )):
+        if row[0] in existing_jobs:
+            continue
+        filename = os.path.splitext(str(row[1]))[0]
+        connection.execute(text(
+            """INSERT INTO campaigns
+               (name, source_job_id, status, created_at, updated_at)
+               VALUES (:name, :job_id, 'active', :created_at, :created_at)"""
+        ), {
+            'name': f'{filename} · {row[2]}', 'job_id': row[0],
+            'created_at': row[3],
+        })
+
+
 def run_migrations(database_target):
     repository = CRMRepository(database_target)
     repository.initialize()
@@ -126,6 +162,7 @@ def run_migrations(database_target):
             index.create(connection, checkfirst=True)
         _verify_contact_points_schema(connection)
         _migrate_operational_alerts(connection)
+        _migrate_campaigns_and_skip_trace(connection)
 
     repository.engine.dispose()
 

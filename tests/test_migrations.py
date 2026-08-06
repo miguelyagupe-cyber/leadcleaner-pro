@@ -40,6 +40,13 @@ class SchemaMigrationTest(unittest.TestCase):
         }
         self.assertIn('emailed_at', alert_columns)
         self.assertIn('sms_sent_at', alert_columns)
+        enrichment_columns = {
+            item['name']
+            for item in inspector.get_columns('enrichment_batches')
+        }
+        self.assertTrue({
+            'campaign_id', 'selection_mode', 'actual_cost', 'error_json'
+        }.issubset(enrichment_columns))
         repository.engine.dispose()
 
     def test_migration_is_idempotent_and_preserves_existing_rows(self):
@@ -102,6 +109,8 @@ class SchemaMigrationTest(unittest.TestCase):
         repository = CRMRepository(self.database_path)
         with repository.engine.connect() as connection:
             count = connection.scalar(text('SELECT count(*) FROM contact_points'))
+            campaign_count = connection.scalar(text('SELECT count(*) FROM campaigns'))
 
         self.assertEqual(count, 1)
+        self.assertEqual(campaign_count, 1)
         repository.engine.dispose()

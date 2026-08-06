@@ -106,7 +106,8 @@
       toast(`Lead moved to ${label(status)}`);await loadBoard();
     }
     async function loadBoard(){
-      const response=await fetch('/api/pipeline');const data=await response.json();
+      const campaign=new URLSearchParams(location.search).get('campaign_id');
+      const response=await fetch(`/api/pipeline${campaign?`?campaign_id=${encodeURIComponent(campaign)}`:''}`);const data=await response.json();
       if(!response.ok){document.getElementById('pipeline-board').innerHTML='<div class="empty">Pipeline unavailable.</div>';return;}
       renderBoard(data);
     }
